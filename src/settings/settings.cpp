@@ -486,16 +486,14 @@ void SettingsWindow::buildGlass() {
 void SettingsWindow::rebuildGlassOffscreen() {
     if (!hasGlass_ || !hwnd_) return;
     // 直接抓会把自己拍进去，所以先让开
-    // ★ 窗口尺寸/位置都要带上外阴影留白（x_/y_/winW_/winH_ 是**内容**的）
-    const int s = shadowInset();
-    SetWindowPos(hwnd_, nullptr, -20000, -20000, winW_ + s * 2, winH_ + s * 2,
-                 SWP_NOREDRAW | SWP_NOACTIVATE | SWP_NOZORDER);
-    Sleep(16);
+    // ★ 不再"挪到屏幕外再挪回来"。
+    //
+    //   那趟搬运是当年"抓屏做玻璃底"留下的（抓之前要躲开自己）。
+    //   现在的 buildGlass() 只画纯透明底 + 边框 + 雾化，**完全不抓屏** ——
+    //   搬运纯属多余，而用户看到的就是
+    //   "拖动放下的瞬间面板被关掉又打开一下"。
     buildGlass();
     redraw();
-    SetWindowPos(hwnd_, nullptr, x_ - s, y_ - s, winW_ + s * 2, winH_ + s * 2,
-                 SWP_NOACTIVATE | SWP_NOZORDER);
-    SetForegroundWindow(hwnd_);
 }
 
 void SettingsWindow::pushFrame() {

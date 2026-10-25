@@ -390,18 +390,16 @@ void IslandWindow::refreshBackdropLive() {
     if (!hwnd_ || !visible_) return;
 
     RECT rc = {x_, y_, x_ + w_, y_ + h_};
-    // ★ 不藏窗口（用户：“放下的时候有面板被重新打开的感觉”）。
-    //   不带 CAPTUREBLT 时分层窗口会被排除，
-    //   而面板和搜索框都是分层窗口 —— 直接抓就是背后的背景，
-    //   不必先藏再显（那一藏一显就是“重新打开”的感觉）。
-    ::ShowWindow(hwnd_, SW_HIDE);
-    ::DwmFlush();
+    // ★ 这里**绝对不能** ShowWindow(SW_HIDE) 再抓。
+    //
+    //   那一藏一显就是用户报的"拖动放下的瞬间面板被关掉又打开一下"；
+    //   而且 backdrop_ 现在**没有任何渲染代码读它**（面板不再抓背景做玻璃），
+    //   这趟搬运纯属多余。
+    //
+    //   不带 CAPTUREBLT 时分层窗口会被排除 —— 直接抓就是面板背后的画面，
+    //   不需要躲开自己。
     Backdrop bd;
-    // ⚠ 必须带 CAPTUREBLT（includeLayered=true 默认）：
-    //   不带它时抓到的是空/黑图，面板就变成不透明的黑底
-    //   （用户：“面板透明没了”）。所以还是藏一下再抓。
-    const bool ok = Surface::capture(rc, 0, bd);
-    ::ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
+    const bool ok = Surface::capture(rc, 0, bd, /*includeLayered=*/false);
 
     // 背景没变就不重建 —— 否则每 150ms 白重建一次（标签面板也这么做）
     if (ok && bd.sig != backdrop_.sig) {
@@ -1841,7 +1839,12 @@ LRESULT IslandWindow::handle(HWND h, UINT msg, WPARAM w, LPARAM l) {
                 //
                 //   用户要求：“希望跟着新位置更新，改大小之后背景也要更新”。
                 //   （拖动中仍然一次都不刷新，避免频闪；只在松手后刷一次）
-                refreshBackdropLive();
+                // ⚠ 上面写着"只重烘焙、不重抓、不藏窗口"，但这里原来调的是
+                //   refreshBackdropLive() —— 它会藏窗口再抓屏再显示，
+                //   所以松手那一下面板看起来被关掉又打开。
+                //   现在就在原地重烘焙一次，窗口一次都不藏。
+                baseValid_ = false;
+                redraw();
 layoutSearchEdit();     // 搜索框位置跟上就行
             }
             return 0;
