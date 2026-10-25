@@ -485,101 +485,67 @@ bool Surface::buildCard(const Backdrop& bd, bool dark, int radius, int blur, int
 // ★ 全局面板透明度 + 恒定细边框。
 //   opacityPercent = 0 时不铺底色（完全透出背后内容，只剩图标与文字）；
 //   无论底色铺不铺，都画一圈极细的"液态"边框 —— 面板透明了，边框还在。
-void Surface::buildFlatPanel(int opacityPercent, int radius, bool dark,
-                              const Backdrop* behind) {
+void Surface::buildFlatPanel(int opacityPercent, int radius, bool dark) {
     if (width() <= 0 || height() <= 0) return;
     int p = opacityPercent;
     if (p < 0) p = 0;
     if (p > 100) p = 100;
-    (void)p;   // 主体保持纯透明（无任何色底），浓淡由窗口级 alpha 负责
+    (void)p;   // 主体保持纯透明（不铺任何色底），浓淡由窗口级 alpha 负责
 
-    // ═══ ① 边缘折射 ═══════════════════════════════════════════════════════
-    //  思路（同类"液态玻璃"面板的通用做法，这里用 CPU 自己实现）：
-    //  在边框内侧 band 像素的窄带里，取"再往外 kShift 像素"的背景颜色画进来，
-    //  画面被朝中心压了一下 —— 就是透过玻璃边看到的画面发生弯折的感觉。
-    const int band = 3;
-    const float kShift = 1.5f;
-    if (behind && behind->sw > 0 && behind->sh > 0 && !behind->px.empty() &&
-        w_ > band * 2 + 4 && h_ > band * 2 + 4) {
-        const int bw = behind->sw, bh = behind->sh;
-        const float fx = (float)bw / (float)w_, fy = (float)bh / (float)h_;
-        auto sample = [&](float px, float py) -> uint32_t {
-            int sx = (int)(px * fx + 0.5f), sy = (int)(py * fy + 0.5f);
-            if (sx < 0) sx = 0;
-            if (sx >= bw) sx = bw - 1;
-            if (sy < 0) sy = 0;
-            if (sy >= bh) sy = bh - 1;
-            return behind->px[(size_t)sy * bw + sx];
-        };
-        for (int d = 0; d < band; ++d) {
-            for (int x = 0; x < w_; ++x) {
-                fillRect(x, d, 1, 1, sample((float)x, (float)d - kShift));
-                fillRect(x, h_ - 1 - d, 1, 1, sample((float)x, (float)(h_ - 1 - d) + kShift));
-            }
-            for (int y = 0; y < h_; ++y) {
-                fillRect(d, y, 1, 1, sample((float)d - kShift, (float)y));
-                fillRect(w_ - 1 - d, y, 1, 1, sample((float)(w_ - 1 - d) + kShift, (float)y));
-            }
-        }
-    }
-
-    // ═══ ② 微斜面边框（模仿"把边沿当作有厚度的小斜面来打光"）═══════════════
+    // ═══════════════════════════════════════════════════════════════════════
+    //  液态玻璃边框（思路参考同类"玻璃面板"工具的做法：把边沿当作有厚度的
+    //  小斜面来打光，而不是画一条线。这里用 CPU 描边模拟，不依赖任何 shader。）
+    //
+    //  ① 微斜面：5 圈同心圆角描边，从外到内亮度按方向光渐变 → 厚度感
+    //  ② 方向光：左上受光偏亮、右下背光偏暗
+    //  ③ 色散暗示：最外圈极淡冷色、最内圈极淡暖色（很克制，3~6/255）
+    //  ④ 内侧光晕：斜面再往里一圈极淡高光，让"玻璃厚度"过渡自然
+    // ═══════════════════════════════════════════════════════════════════════
     const int rings = 5;
-    const uint32_t lit = dark ? 0xFFFFFFu : 0x000000u;   // 深色主题用亮边、浅色主题用暗边
-    for (int i = 0; i < rings; ++i) {
+    // 受光/背光的基准色（深色主题下用亮边，浅色主题下用暗边）
+    const uint32_t litR = dark ? 0xFFu : 0x00u, litG = dark ? 0xFFu : 0x00u, litB = dark ? 0xFFu : 0x00u;
+
+    auto ring = [&](int i) {
+        // i = 0 最外圈（接触桌面，最暗）→ i 越大越靠内（越亮，模拟斜面迎光）
         int a;
-        if (i == 0)      a = dark ? 0x2Au : 0x26u;   // 最外：接触阴影
+        if (i == 0)      a = dark ? 0x2Au : 0x26u;   // 接触阴影
         else if (i == 1) a = dark ? 0x3Cu : 0x33u;
         else if (i == 2) a = dark ? 0x50u : 0x40u;
-        else if (i == 3) a = dark ? 0x66u : 0x4Cu;   // 受光面（最亮）
-        else             a = dark ? 0x3Cu : 0x2Eu;   // 内侧收一点，免得发白
-        int x = i, y = i, w = w_ - 2 * i, h = h_ - 2 * i, r = radius - i;
-        if (r < 1) r = 1;
-        if (w > 2 && h > 2) strokeRoundRect(x, y, w, h, r, ((uint32_t)a << 24) | lit, 1.0f);
-    }
+        else if (i == 3) a = dark ? 0x66u : 0x4Cu;   // 受光面
+        else             a = dark ? 0x3Cu : 0x2Eu;   // 内侧收一点，避免"发白"
+        uint32_t col = ((uint32_t)a << 24) | (litR << 16) | (litG << 8) | litB;
+        int x = i, y = i;
+        int w = w_ - 2 * i, h = h_ - 2 * i;
+        int r = radius - i; if (r < 1) r = 1;
+        if (w > 2 && h > 2) strokeRoundRect(x, y, w, h, r, col, 1.0f);
+    };
+    for (int i = 0; i < rings; ++i) ring(i);
 
-    // ═══ ③ 色散暗示：最外圈极淡冷色、最内圈极淡暖色 ═══════════════════════
-    strokeRoundRect(0, 0, w_, h_, radius > 0 ? radius : 1, 0x0A60A0FFu, 1.0f);
+    // ③ 色散暗示：外冷内暖（各 1px，极淡）
+    strokeRoundRect(0, 0, w_, h_, radius, 0x0A60A0FFu, 1.0f);          // 最外：极淡冷
     {
-        int ri = rings - 1, w2 = w_ - 2 * ri, h2 = h_ - 2 * ri, r2 = radius - ri;
-        if (r2 < 1) r2 = 1;
-        if (w2 > 2 && h2 > 2) strokeRoundRect(ri, ri, w2, h2, r2, 0x0AFFB060u, 1.0f);
+        int ri = rings - 1;
+        int w2 = w_ - 2 * ri, h2 = h_ - 2 * ri;
+        int r2 = radius - ri; if (r2 < 1) r2 = 1;
+        if (w2 > 2 && h2 > 2) strokeRoundRect(ri, ri, w2, h2, r2, 0x0AFFB060u, 1.0f);   // 内圈：极淡暖
     }
 
-    // ═══ ④ 内侧光晕 + 左上镜面高光 ════════════════════════════════════════
+    // ④ 内侧光晕：斜面再向内一圈的柔光，模拟玻璃内部的厚度过渡
     {
-        int gi = rings, w3 = w_ - 2 * gi, h3 = h_ - 2 * gi, r3 = radius - gi;
-        if (r3 < 1) r3 = 1;
-        if (w3 > 2 && h3 > 2) {
-            strokeRoundRect(gi, gi, w3, h3, r3, dark ? 0x14FFFFFFu : 0x10000000u, 1.0f);
-            strokeRoundRect(0, 0, w_, h_, radius > 0 ? radius : 1,
-                            dark ? 0x5AFFFFFFu : 0x44000000u, 1.0f);
-        }
+        int gi = rings;
+        int w3 = w_ - 2 * gi, h3 = h_ - 2 * gi;
+        int r3 = radius - gi; if (r3 < 1) r3 = 1;
+        uint32_t glow = dark ? 0x14FFFFFFu : 0x10000000u;
+        if (w3 > 2 && h3 > 2) strokeRoundRect(gi, gi, w3, h3, r3, glow, 1.0f);
     }
-}
 
-// ★ 整幅内缩 + 外圈柔和投影（窗口尺寸不变，视觉上面板略微变小并"浮"起来）
-void Surface::applyOuterShadow(int margin, int radius, bool dark) {
-    if (w_ <= 0 || h_ <= 0 || margin <= 0) return;
-    if (margin * 2 >= w_ || margin * 2 >= h_) return;
-    std::vector<uint32_t> tmp = px_;                 // 先留一份原内容
-    std::fill(px_.begin(), px_.end(), 0u);           // 清空画布
-    const int iw = w_ - margin * 2, ih = h_ - margin * 2;
-    // ① 从内框向外画一圈圈递减的黑色投影（越远越淡）
-    for (int i = 0; i < margin; ++i) {
-        int a = (int)((float)(margin - i) / (float)margin * (dark ? 96.0f : 72.0f));
-        if (a <= 0) continue;
-        int x = margin - 1 - i, y = margin - 1 - i;
-        int w = iw + i * 2 + 2, h = ih + i * 2 + 2, r = radius + i;
-        if (w > 2 && h > 2 && x >= 0 && y >= 0 && x + w <= w_ && y + h <= h_)
-            strokeRoundRect(x, y, w, h, r, ((uint32_t)a << 24), 1.0f);
-    }
-    // ② 把原内容整体贴到内框位置（内容本来就在透明底上，直接覆盖）
-    for (int y = 0; y < ih; ++y) {
-        for (int x = 0; x < iw; ++x) {
-            uint32_t src = tmp[(size_t)y * w_ + x];
-            if ((src >> 24) == 0) continue;
-            px_[(size_t)(y + margin) * w_ + (x + margin)] = src;
+    // ⑤ 左上角单独补一道更亮的高光（方向光的最强点，强化"迎光"）
+    {
+        uint32_t spec = dark ? 0x5AFFFFFFu : 0x44000000u;
+        int len = w_ / 3;
+        if (len > 4) {
+            // 用两段短描边近似左上圆角处的高光
+            strokeRoundRect(0, 0, w_, h_, radius, spec, 1.0f);
         }
     }
 }

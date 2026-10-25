@@ -203,17 +203,11 @@ void HoverPanel::rebuildBase() {
     if (w_ <= 0 || h_ <= 0) return;
     base_.create(w_, h_);
     const int radius = px(14);
-
-    // ★ 抓一次背后的画面（不模糊），只喂给边框内侧的折射；抓不到就只画斜面边框
-    RECT rc = { x_, y_, x_ + w_, y_ + h_ };
-    if (!Surface::capture(rc, 0, backdrop_)) { /* 忽略：无背景时折射自动跳过 */ }
-
-    // ★ 纯透明底 + 液态玻璃边框（有背景则边框内侧折射）
+    // ★ 全局面板透明度：所有面板共用一层纯色（0 = 纯透明，只剩图标与文字）。
+    //   不再抓屏、不再模糊、不再按壁纸明暗自适应 —— 见 glass.cpp buildFlatPanel。
     const int op = cfg_ ? cfg_->panelOpacity : 0;
-    base_.buildFlatPanel(op, radius, dark_, &backdrop_);
+    base_.buildFlatPanel(op, radius, dark_);   // 0 = 纯透明，边框始终保留
     base_.cutRoundCorners(radius);
-    // ★ 整幅内缩 8px 并画出外圈柔和投影（窗口尺寸不变）
-    base_.applyOuterShadow(px(8), radius, dark_);
     baseValid_ = true;
 }
 
