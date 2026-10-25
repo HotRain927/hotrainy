@@ -14,6 +14,8 @@ A lightweight **C++ / Win32 + GDI+** toolkit for Windows 11 that provides:
   directions, drag-to-move and persisted position.
 
 Portable by design: **no admin rights, no MSVC runtime (static CRT), no registry footprint**
+
+> **No network, no telemetry** - there is no networking API in the source at all; see [Privacy & security](#privacy--security).
 (the only registry write happens if *you* enable "start with Windows").
 
 ![Settings](screenshots/设置界面预览.png)
