@@ -549,79 +549,65 @@ void Surface::buildFlatPanel(int opacityPercent, int radius, bool dark) {
 }
 
 
-// ── 自包含的小工具：圆角矩形内外判定 + 可分离盒式模糊（只在本文件用）──
-static inline bool insideRoundRect(int x, int y, int rx0, int ry0, int rw, int rh, int r) {
-    if (x < rx0 || y < ry0 || x >= rx0 + rw || y >= ry0 + rh) return false;
-    if (r <= 0) return true;
-    int cx = x < rx0 + r ? rx0 + r : (x >= rx0 + rw - r ? rx0 + rw - 1 - r : x);
-    int cy = y < ry0 + r ? ry0 + r : (y >= ry0 + rh - r ? ry0 + rh - 1 - r : y);
-    if (cx == x && cy == y) return true;
-    int dx = x - cx, dy = y - cy;
-    return dx * dx + dy * dy <= r * r;
-}
+// ★ 柔和外阴影：只在内容矩形之外画一圈羽化暗环，**不动画布里的内容**。
+//
+// ⚠ 上一版是"把整幅内容向内缩 margin、再把影子铺在外圈"。那等于整体平移内容：
+//   面板变小、边框跟着缩进、后画的悬停高亮也一起偏 —— 交接文档第七节记录的
+//   三条缺陷同源，就是它。而且盒式模糊铺满会把"纯透明主体"一起压暗。
+//
+//   现在：窗口向外扩留白（panel.cpp 负责），内容位置不变，
+//   这里只按"到内容圆角矩形的有符号距离"往外衰减画影子。
+void Surface::applyOuterShadow(const RECT& contentRect, int radius, bool dark, int offsetY) {
+    if (w_ <= 0 || h_ <= 0) return;
+    const int cl = contentRect.left, ct = contentRect.top;
+    const int cw = contentRect.right - cl, ch = contentRect.bottom - ct;
+    if (cw < 8 || ch < 8) return;
 
-static void boxBlurARGB(std::vector<uint32_t>& px, int w, int h, int rad) {
-    if (rad < 1 || w <= 2 || h <= 2) return;
-    std::vector<uint32_t> tmp(px.size(), 0u);
-    // 水平
-    for (int y = 0; y < h; ++y) {
-        for (int x = 0; x < w; ++x) {
-            int a = 0, n = 0;
-            for (int k = -rad; k <= rad; ++k) {
-                int xx = x + k;
-                if (xx < 0 || xx >= w) continue;
-                a += (int)(px[(size_t)y * w + xx] >> 24);
-                ++n;
-            }
-            tmp[(size_t)y * w + x] = n ? ((uint32_t)(a / n) << 24) : 0u;
+    const double peak = dark ? 0.42 : 0.26;   // 影子最深处的 alpha
+    const double reach = std::max(6.0, (double)std::max(w_ - cw, h_ - ch) * 0.5);  // 衰减距离
+    // 让影子向内渗一点点：边界处不会出现"内部 0 / 外部最深"的硬台阶，
+    // 顺带在面板内侧压出一道极淡的暗边，看着有厚度。
+    const double bleed = 2.5;
+
+    for (int y = 0; y < h_; ++y) {
+        for (int x = 0; x < w_; ++x) {
+            const double px = x + 0.5, py = y + 0.5;
+            double dx = std::fabs(px - (cl + cw * 0.5)) - (cw * 0.5 - radius);
+            double dy = std::fabs(py - (ct + ch * 0.5 + offsetY)) - (ch * 0.5 - radius);
+            if (dx < 0) dx = 0;
+            if (dy < 0) dy = 0;
+            const double d = std::sqrt(dx * dx + dy * dy) - radius + bleed;
+            if (d <= 0) continue;                 // 主体内部：保持纯透明
+            const double t = d / reach;
+            if (t >= 1.0) continue;
+            double a = peak * (1.0 - t) * (1.0 - t);
+
+            // 画布边界收敛：影子必须在画布边上归零。顶部留白特意做窄
+            //（避让标签栏），不收敛的话那里会看到一条硬切线。
+            const int fe = 6;
+            if (x < fe) a *= (double)x / fe;
+            if (y < fe) a *= (double)y / fe;
+            if (x >= w_ - fe) a *= (double)(w_ - 1 - x) / fe;
+            if (y >= h_ - fe) a *= (double)(h_ - 1 - y) / fe;
+            if (a <= 0.004) continue;
+
+            const uint32_t col = (uint32_t)std::lround(a * 255.0) << 24;   // 纯黑影子
+            px_[(size_t)y * w_ + x] = blendSrcOverA(px_[(size_t)y * w_ + x], col, 1.0);
         }
     }
-    // 垂直
-    for (int y = 0; y < h; ++y) {
-        for (int x = 0; x < w; ++x) {
-            int a = 0, n = 0;
-            for (int k = -rad; k <= rad; ++k) {
-                int yy = y + k;
-                if (yy < 0 || yy >= h) continue;
-                a += (int)(tmp[(size_t)yy * w + x] >> 24);
-                ++n;
-            }
-            px[(size_t)y * w + x] = n ? ((uint32_t)(a / n) << 24) : 0u;
-        }
-    }
 }
 
-// ★ 柔和外阴影：内容整体向内缩 margin 像素，外圈"铺一层再模糊"生成软投影
-//   （上一版用一圈圈描边，纯透明面板上会看成硬黑边；这里改成模糊，边缘自然过渡）
-void Surface::applyOuterShadow(int margin, int radius, bool dark) {
-    if (w_ <= 0 || h_ <= 0 || margin <= 0) return;
-    if (margin * 2 + 8 >= w_ || margin * 2 + 8 >= h_) return;
-
-    std::vector<uint32_t> content = px_;
-    const int iw = w_ - margin * 2, ih = h_ - margin * 2;
-
-    // ① 影子层：内框略微放大、下移 1px，铺一层低 alpha（深色主题更浓一点）
-    std::vector<uint32_t> sh((size_t)w_ * h_, 0u);
-    const uint32_t sa = (uint32_t)(dark ? 150 : 110) << 24;
-    const int sp = 2;
-    for (int y = 0; y < h_; ++y)
-        for (int x = 0; x < w_; ++x)
-            if (insideRoundRect(x, y, margin - sp, margin - sp + 1, iw + sp * 2, ih + sp * 2, radius + sp))
-                sh[(size_t)y * w_ + x] = sa;
-
-    // ② 两次盒式模糊 → 柔和渐变
-    boxBlurARGB(sh, w_, h_, margin / 2 > 0 ? margin / 2 : 2);
-    boxBlurARGB(sh, w_, h_, margin / 3 > 0 ? margin / 3 : 2);
-
-    // ③ 合成：先影子，再把缩进后的内容叠上去
-    px_.assign((size_t)w_ * h_, 0u);
-    for (size_t i = 0; i < px_.size(); ++i)
-        if (sh[i] >> 24) px_[i] = sh[i];
-    for (int y = 0; y < ih; ++y) {
-        for (int x = 0; x < iw; ++x) {
-            uint32_t src = content[(size_t)y * w_ + x];
-            if ((src >> 24) == 0) continue;
-            px_[(size_t)(y + margin) * w_ + (x + margin)] = src;
+void Surface::blendOver(const Surface& src, int dx, int dy) {
+    if (src.w_ <= 0 || src.h_ <= 0) return;
+    for (int y = 0; y < src.h_; ++y) {
+        const int ty = y + dy;
+        if (ty < 0 || ty >= h_) continue;
+        for (int x = 0; x < src.w_; ++x) {
+            const int tx = x + dx;
+            if (tx < 0 || tx >= w_) continue;
+            const uint32_t s = src.px_[(size_t)y * src.w_ + x];
+            if ((s >> 24) == 0) continue;
+            px_[(size_t)ty * w_ + tx] = blendSrcOverA(px_[(size_t)ty * w_ + tx], s, 1.0);
         }
     }
 }

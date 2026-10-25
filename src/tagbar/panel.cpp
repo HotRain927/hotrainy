@@ -199,23 +199,36 @@ bool HoverPanel::mouseInside() const {
     return p.x >= x_ && p.x <= x_ + w_ && p.y >= y_ && p.y <= y_ + h_;
 }
 
+// ── 几何：圆角半径 + 外阴影留白 ────────────────────────────────────────────
+int HoverPanel::cornerRadius() const { return px(18); }
+int HoverPanel::shadowInsetX() const { return px(14); }
+int HoverPanel::shadowInsetTop() const { return px(6); }   // 窄：影子不能压到标签栏上
+int HoverPanel::shadowInsetBottom() const { return px(14); }
+
 void HoverPanel::rebuildBase() {
     if (w_ <= 0 || h_ <= 0) return;
+    const int radius = cornerRadius();
     base_.create(w_, h_);
-    const int radius = px(18);
 
     // ★ 主体纯透明 + 细边框（边框与主体同一坐标系，四角都是圆角）
     const int op = cfg_ ? cfg_->panelOpacity : 0;
     base_.buildFlatPanel(op, radius, dark_);
 
     // ★ 不再 cutRoundCorners：那一刀是为"不透明底"准备的（把角上的底色切透明）。
-    //   现在主体本身就是全透明，只有边框在画，而边框走的是 SDF 圆角描边 ——
+    //   现在主体就是全透明，只有边框在画，而边框走的是 SDF 圆角描边 ——
     //   四角的弧由描边自己画出来。再切一刀只会把边框最外那 1px 的 alpha 削掉一半，
     //   等于自己把刚画好的边削淡。
 
-    // ★ 不再做"整体平移"：那个平移会把四角圆角裁掉、让边框与主体错位、
-    //   还会让悬停高亮伸出面板之外。
-    //   外阴影改为后续在窗口外扩留白里画（未完成，见 docs/代码结构.md 待办）。
+    // ★ 外阴影（第二版做法）：画布比内容大出"四周留白"，影子只画在内容矩形之外，
+    //   内容坐标一个像素都不动。
+    //   上一版是"把整幅内容向内平移 margin 来腾地方"——面板会变小、边框缩进、
+    //   悬停高亮跟着偏，三条缺陷同源（交接文档第七节）。
+    const int ix = shadowInsetX(), it = shadowInsetTop(), ib = shadowInsetBottom();
+    shadow_.create(w_ + ix * 2, h_ + it + ib);
+    shadow_.clear();
+    RECT content = {ix, it, ix + w_, it + h_};
+    shadow_.applyOuterShadow(content, radius, dark_, px(2));
+
     baseValid_ = true;
 }
 
@@ -356,15 +369,22 @@ void HoverPanel::redraw() {
             }
         }
     }
+    // ★ 内容 + 外阴影合成到"带留白"的画布，再整幅提交。
+    //   窗口落点要向左上各让出留白（dst = 内容位置 - 留白），
+    //   因此鼠标消息的客户区坐标也要减掉同样的留白（见 handle）。
+    const int ix = shadowInsetX(), it = shadowInsetTop();
+    outer_ = shadow_;
+    outer_.blendOver(frame_, ix, it);
+
     HDC screen = GetDC(nullptr);
-    HBITMAP bmp = frame_.createPremultipliedBitmap(screen);
+    HBITMAP bmp = outer_.createPremultipliedBitmap(screen);
     if (bmp) {
         HDC mem = CreateCompatibleDC(screen);
         HGDIOBJ old = SelectObject(mem, bmp);
         POINT src = {0, 0};
-        SIZE size = {w_, h_};
+        SIZE size = {outer_.width(), outer_.height()};
         BLENDFUNCTION blend = {AC_SRC_OVER, 0, 255, AC_SRC_ALPHA};
-        POINT dst = {x_, y_};
+        POINT dst = {x_ - ix, y_ - it};
         // ★ 全局面板透明度：滑块 0-100 作用在这一帧的整体 alpha 上
         if (cfg_) { int _op = cfg_->panelOpacity; if (_op < 0) _op = 0; if (_op > 100) _op = 100; blend.SourceConstantAlpha = (BYTE)((int)blend.SourceConstantAlpha * _op / 100); }
         UpdateLayeredWindow(hwnd_, screen, &dst, &size, mem, &src, 0, &blend, ULW_ALPHA);
@@ -551,7 +571,10 @@ LRESULT HoverPanel::handle(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_MOUSEACTIVATE:
             return MA_NOACTIVATE;
         case WM_MOUSEMOVE: {
-            int y = (short)HIWORD(lp);
+            // ★ 客户区原点在"内容 - 留白"处（外阴影要留白），命中判定全都用内容坐标，
+            //   所以这里先把留白减掉。
+            const int my = shadowInsetTop();
+            int y = (short)HIWORD(lp) - my;
             int row = rowAt(y);
             if (row != hoverRow_) {
                 hoverRow_ = row;
@@ -593,8 +616,9 @@ LRESULT HoverPanel::handle(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         }
         case WM_LBUTTONDOWN: {
-            int x = (short)LOWORD(lp);
-            int y = (short)HIWORD(lp);
+            // 同样先换成内容坐标（滚动条几何、行命中都是内容坐标）
+            int x = (short)LOWORD(lp) - shadowInsetX();
+            int y = (short)HIWORD(lp) - shadowInsetTop();
 
             if (sbVisible_ && x >= sbX1_ && x <= sbX2_) {
                 if (y >= sbThumbY1_ && y <= sbThumbY2_) {
@@ -621,10 +645,11 @@ LRESULT HoverPanel::handle(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             }
             return 0;
         case WM_RBUTTONUP: {
-            int y = (short)HIWORD(lp);
-            int row = rowAt(y);
+            // rowAt 要内容坐标；ClientToScreen 要客户区坐标（原样传，别混）
+            const int cy = (short)HIWORD(lp);
+            int row = rowAt(cy - shadowInsetTop());
             if (row >= 0) {
-                POINT pt = {(short)LOWORD(lp), y};
+                POINT pt = {(short)LOWORD(lp), cy};
                 ClientToScreen(hwnd, &pt);
                 if (onShortcutRightClick) onShortcutRightClick(row, pt);
             }

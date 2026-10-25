@@ -56,12 +56,24 @@ private:
     void buildScrollbar();
     void launch(int rowIndex);
 
+    // 圆角半径与外阴影留白（都用 px() 换算，DPI 变了跟着变）
+    //
+    // ★ 外阴影方案：窗口只顾着往外扩这几像素留白，**内容坐标一点不动**。
+    //   之前那版是"把内容整体向内平移"来腾地方 —— 面板会变小、边框缩进、
+    //   悬停高亮跟着偏（交接文档第七节的教训）。
+    int cornerRadius() const;
+    int shadowInsetX() const;      // 左/右留白
+    int shadowInsetTop() const;    // 顶部留白：特意做窄，影子不能压到标签栏上
+    int shadowInsetBottom() const; // 底部留白
+
     HINSTANCE hinst_ = nullptr;
     HWND hwnd_ = nullptr;
     Config* cfg_ = nullptr;
 
-    Surface base_;
-    Surface frame_;
+    Surface base_;    // 内容大小：纯透明底 + 边框
+    Surface frame_;   // 内容大小：这一帧的内容（底 + 高亮 + 图标 + 文字）
+    Surface shadow_;  // 画布大小：只含外圈影子（重建底时烘焙一次）
+    Surface outer_;   // 画布大小：shadow_ + frame_ → 提交给窗口
     Backdrop backdrop_;
     bool baseValid_ = false;
     std::wstring wallKey_;   // 上次烘焙用的壁纸路径（参与 hover_panel.py:296 的复用 key）

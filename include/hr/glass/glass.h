@@ -56,8 +56,22 @@ public:
     //   不抓屏、不模糊、不按背景明暗自适应。所有面板共用同一个百分比。
     void buildFlatPanel(int opacityPercent, int radius, bool dark);
 
-    // ★ 整幅内容向内缩 margin 像素，外圈画【柔和】投影（铺一层 + 盒式模糊，不是硬描边）
-    void applyOuterShadow(int margin, int radius, bool dark);
+    // ★ 柔和外阴影：只画【内容矩形之外】那一圈羽化暗环，不动画布里的任何内容。
+    //
+    //   调用约定：this 必须是一张 (内容 + 四周留白) 的画布，contentRect 是
+    //   "内容"在这张画布里的位置（例如把 793x400 的内容放进 835x430 的画布，
+    //   就是 {21, 9, 814, 409}）。调用方之后用 blendOver() 把内容贴到同一位置。
+    //
+    //   为什么是"只画外圈"而不是盒式模糊铺满：
+    //     · 铺满会把面板主体一起压暗 —— 而主体要求是纯透明的；
+    //     · 模糊还会在画布边缘留下没衰减完的 alpha，边上出现一条硬切线。
+    //   这里按"到内容圆角矩形的有符号距离"做二次衰减，并且强制在画布边缘归零。
+    //
+    //   offsetY：影子整体下移几像素（光源在上方，影子偏低才自然）。
+    void applyOuterShadow(const RECT& contentRect, int radius, bool dark, int offsetY = 0);
+
+    // 把 src 以 source-over 叠到本画布的 (dx, dy) 处（直通 alpha，不做 premultiply）。
+    void blendOver(const Surface& src, int dx, int dy);
     // 玻璃卡片（设置窗口）：frost + 渐变 + 高光 + 一层薄雾，**不含**描边与圆角切边
     // veil：叠在色调之上的一层雾的 alpha（深色压黑 46 / 浅色提白 40），0 表示不叠
     bool buildCard(const Backdrop& bd, bool dark, int radius, int blur, int veil);
