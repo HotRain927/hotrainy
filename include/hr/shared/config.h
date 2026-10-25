@@ -51,7 +51,7 @@ struct Config {
     int searchX = -1;
     int searchY = -1;
     bool searchPosCustom = false;
-    std::string searchScope = "user";       // common / user / all
+    std::string searchScope = "all";        // 固定 all（控件已删，载入时强制，见 config.cpp）
     bool searchDialogAuto = true;
 
     // ── 任务栏（实现见 src/taskbar.cpp + src/tb/xaml/）──

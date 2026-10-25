@@ -105,10 +105,11 @@ bool loadConfig(Config& cfg, std::vector<std::string>& warnings) {
     cfg.searchX = clampInt(root.getNum("searchX", -1), -1, 20000, -1);
     cfg.searchY = clampInt(root.getNum("searchY", -1), -1, 20000, -1);
     cfg.searchPosCustom = root.getBool("searchPosCustom", false);
-    cfg.searchScope = root.getStr("searchScope", "user");
-    if (cfg.searchScope != "common" && cfg.searchScope != "user" && cfg.searchScope != "all") {
-        cfg.searchScope = "common";
-    }
+    // ★ 索引范围固定为「全盘」—— 设置里那两个控件已删除
+    //   （用户："搜索目录不用让他更改，默认全盘，也只能是全盘"）。
+    //   这里**故意不读**配置里的值：旧配置里可能是 common/user，
+    //   读回来会让人"搜不到文件还以为程序坏了"。
+    cfg.searchScope = "all";
     cfg.searchDialogAuto = root.getBool("searchDialogAuto", true);
 
     // ── 任务栏透明 ──

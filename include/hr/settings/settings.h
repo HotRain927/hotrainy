@@ -121,7 +121,6 @@ private:
     void drawSearchTips(int x, int y);
     void drawTaskbarNotes(int x, int y);
     void drawWallpaperRow(int xRight, int cy);
-    void drawDirsRow(int xRight, int cy);
     void drawSizeRow(int xRight, int cy);
 
     // ── 读写 ──
@@ -135,8 +134,6 @@ private:
 
     void pickWallpaper();
     void clearWallpaper();
-    void addDir();
-    void clearDirs();
     void resetSearchSize();
     void startRecord();
     void recordKey(WPARAM vk);

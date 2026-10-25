@@ -911,13 +911,6 @@ void SettingsWindow::drawWallpaperRow(int xRight, int cy) {
     button(left, cy, L"选择图片…", "wall_pick", [this]() { pickWallpaper(); });
 }
 
-void SettingsWindow::drawDirsRow(int xRight, int cy) {
-    size_t n = cfg_->searchDirs.size();
-    int left = xRight;
-    if (n > 0) left = button(xRight, cy, L"清空", "dirs_clear", [this]() { clearDirs(); });
-    button(left, cy, L"添加目录…", "dirs_add", [this]() { addDir(); });
-}
-
 void SettingsWindow::drawSizeRow(int xRight, int cy) {
     Palette c = palette();
     bool custom = cfg_->searchSizeCustom || cfg_->searchPosCustom;
@@ -1018,16 +1011,9 @@ void SettingsWindow::redraw() {
                [this](bool v) { setBool("search_enabled", v); });
     });
     y = row(lx, y, L"呼出快捷键", "hotkey", [this](int x, int cy) { hotkeyPill(x, cy); });
-    y = row(lx, y, L"搜索目录（" + std::to_wstring(cfg_->searchDirs.size()) + L"）", "",
-            [this](int x, int cy) { drawDirsRow(x, cy); });
-    y = row(lx, y, L"索引范围", "search_scope", [this](int x, int cy) {
-        segmented(x, cy, {{L"常用", "common"}, {L"用户目录", "user"}, {L"全盘", "all"}},
-                  cfg_->searchScope, "search_scope",
-                  [this](const std::string& v) {
-                      cfg_->searchScope = v;
-                      notify("search_scope");
-                  });
-    });
+    // ★ 「搜索目录」与「索引范围」两个控件已按用户要求删除：
+    //   搜索固定为**全盘**、目录不可更改。范围在 config 载入时被强制成 "all"
+    //   （见 config.cpp），这样搜索行为唯一，也不再有"范围选错所以搜不到"的坑。
     y = row(lx, y, L"搜索框大小", "size", [this](int x, int cy) { drawSizeRow(x, cy); });
     y = row(lx, y, L"跟随资源管理器", "search_follow_explorer", [this](int x, int cy) {
         toggle(x, cy, cfg_->searchFollow, "search_follow_explorer",
@@ -1384,35 +1370,6 @@ void SettingsWindow::clearWallpaper() {
     tab.wallpaper.clear();
     logf("settings: 标签 %s 壁纸已清除", tab.id.c_str());
     notify("wallpaper");
-}
-
-void SettingsWindow::addDir() {
-    SetWindowPos(hwnd_, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
-    std::wstring path;
-    bool picked = pickFolder(hwnd_, path);
-    SetWindowPos(hwnd_, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
-    if (!picked) {
-        redraw();
-        return;
-    }
-
-    std::wstring norm = normPath(path);
-    std::wstring low = lowerOf(norm);
-    for (const auto& d : cfg_->searchDirs) {
-        if (lowerOf(d) == low) {
-            redraw();
-            return;
-        }
-    }
-    cfg_->searchDirs.push_back(norm);
-    logf("settings: 加入搜索目录 %s", toUtf8(norm).c_str());
-    notify("search_dirs");
-}
-
-void SettingsWindow::clearDirs() {
-    cfg_->searchDirs.clear();
-    logf("settings: 搜索目录已清空");
-    notify("search_dirs");
 }
 
 void SettingsWindow::resetSearchSize() {

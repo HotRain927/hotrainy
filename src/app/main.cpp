@@ -885,9 +885,8 @@ bool applySetting(const std::string& key) {
         } else {
             g_search.hide();
         }
-    } else if (key == "search_scope" || key == "search_dirs") {
-        // 对照 main.py:_set_search_scope / _set_search_dirs：改完重扫一遍
-        g_search.reloadIndex();
+    // （原 search_scope / search_dirs 分支已删：那两个控件去掉了，
+    //   范围固定全盘、目录不可改，不会再有人触发这两个 key。）
     } else if (key == "audio_bar") {
         if (g_cfg.audioBar) {
             startAudioBar();
