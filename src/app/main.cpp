@@ -32,6 +32,7 @@
 #include "hr/settings/settings_wire.h"
 #include "hr/search/search_wire.h"
 #include "hr/island/island_wire.h"
+#include "hr/audio/audio_wire.h"
 
 using namespace hr;
 
@@ -83,8 +84,6 @@ const UINT_PTR kFileDialogTimer = 0xC4;
     // ⚠ 这个等待**只对"点在任务栏上"生效** ——
     //   点别处是立刻收的（那边不可能有激活消息）。
     const DWORD kPendingCloseMs = 180;
-const int kHotkeyHideBar = 1;
-const int kHotkeySearch = 2;
 
 
 Config g_cfg;
@@ -818,92 +817,21 @@ void hidePanel() {
 }
 
 // 搜索热键：设置里改了立即重注册，失败返回 false（设置窗口会显示「已被占用」）
-bool registerSearchHotkey() {
-    if (g_searchHotkeyOk) {
-        UnregisterHotKey(g_msgWnd, kHotkeySearch);
-        g_searchHotkeyOk = false;
-    }
-    if (!g_cfg.searchEnabled) {
-        logf("hotkey[搜索]: 功能已关闭");
-        return true;
-    }
-    UINT mods = 0, vk = 0;
-    if (!parseHotkey(g_cfg.searchHotkey, mods, vk)) {
-        logf("hotkey[搜索]: 解析失败 %s", g_cfg.searchHotkey.c_str());
-        return false;
-    }
-    g_searchHotkeyOk =
-        RegisterHotKey(g_msgWnd, kHotkeySearch, mods | MOD_NOREPEAT, vk) != FALSE;
-    // ★ 失败时把 Windows 错误码也写下来：
-    //   1409 = ERROR_HOTKEY_ALREADY_REGISTERED（被别的窗口占了）；
-    //   其它值说明是参数/解析层面的问题 —— 只写"可能被占用"是分辨不出来的。
-    const DWORD hkErr = g_searchHotkeyOk ? 0 : ::GetLastError();
-    logf("hotkey[搜索] %s (mods=0x%X vk=0x%X): %s%s", g_cfg.searchHotkey.c_str(),
-         (unsigned)mods, (unsigned)vk,
-         g_searchHotkeyOk ? "已注册" : "注册失败",
-         g_searchHotkeyOk ? "" : (hkErr == 1409 ? " error=1409 已被别的窗口注册" : " error=?"));
-    if (!g_searchHotkeyOk) logf("hotkey[搜索]: GetLastError=%lu", (unsigned long)hkErr);
-    return g_searchHotkeyOk;
-}
+// ★ registerSearchHotkey() 已搬到 src/search/search_wire.cpp。
 
 // 设置窗口改完一项后调用：把变化推给各部件
 bool applySetting(const std::string& key) {
-    if (key == "hover_mode") {
-        hidePanel();
-        g_bar.setActive(-1);
-    } else if (key == "panel_opacity") {
-        // 全局面板透明度变了：各面板按新 alpha 重新出帧
-        hidePanel();
-        g_bar.refreshBackdrop(false);
-        g_bar.onConfigChanged();
-        g_panel.onConfigChanged();
-        g_island.refreshAppearance();
-    } else if (key == "glass_mode" || key == "wallpaper_mode") {
-        hidePanel();
-        g_bar.refreshBackdrop(true);
-        g_bar.onConfigChanged();
-        g_panel.onConfigChanged();
-        // ★ 岛台面板也得跟着变 —— 原来只通知了标签栏和标签面板，
-        //   结果关掉玻璃后岛台还是旧样子（用户说的"透明不实时更新"）。
-        g_island.refreshAppearance();
-    } else if (key == "shortcut_font_size") {
-        g_panel.setFontSize(g_cfg.shortcutFontSize);
-        g_panel.onConfigChanged();
-    } else if (key == "wallpaper") {
-        hidePanel();
-        g_panel.onConfigChanged();
-        g_island.refreshAppearance();
-    } else if (key == "search_hotkey") {
-        return registerSearchHotkey();
-    } else if (key == "search_enabled") {
-        // 对照 main.py:_set_search_enabled：关掉就收窗、停索引；打开就重建
-        registerSearchHotkey();
-        if (g_cfg.searchEnabled) {
-            g_search.reloadIndex();
-        } else {
-            g_search.hide();
-        }
-    // （原 search_scope / search_dirs 分支已删：那两个控件去掉了，
-    //   范围固定全盘、目录不可改，不会再有人触发这两个 key。）
-    } else if (key == "audio_bar") {
-        if (g_cfg.audioBar) {
-            startAudioBar();
-        } else {
-            stopAudioBar();
-        }
-    } else if (key == "taskbar_transparent") {
-        taskbarService().SetTransparent(g_cfg.taskbarTransparent);
-    } else if (key == "taskbar_alpha") {
-        // 强度改动不需要重启引擎，SetAlpha 会唤醒工作线程重放
-        taskbarService().SetAlpha(g_cfg.taskbarAlpha);
-    }
-    // ★ 音频条尺寸/方向：只把新几何交给它原地改，绝不 stop/start
-    if (key == "audio_bar_w" || key == "audio_bar_h" || key == "audio_bar_dir") {
-        setAudioBarGeometry(g_cfg.audioBarW, g_cfg.audioBarH, g_cfg.audioBarDir);
-    setAudioBarPos(g_cfg.audioBarX, g_cfg.audioBarY);
-        return true;
-    }
-    return true;
+    // ★ 这里现在只是**派发**：每个模块只管自己那几个键
+    //   （handled = 这个键是不是我的；返回值 = 生效成功与否）。
+    //   加设置项时只改**归属模块**的 xxx_applySetting，main.cpp 不用动 ——
+    //   归属见 docs/代码结构.md 第七节那张表。
+    bool handled = false;
+    bool ok = true;
+    if (!handled) ok = tagbar_applySetting(key, handled);
+    if (!handled) ok = island_applySetting(key, handled);
+    if (!handled) ok = search_applySetting(key, handled);
+    if (!handled) ok = audio_applySetting(key, handled);
+    return ok;
 }
 
 // ★ openSettings() 已搬到 src/settings/settings_wire.cpp（声明见 settings_wire.h）。
@@ -1135,10 +1063,7 @@ int main() {
     if (g_cfg.audioBarH <= 0) g_cfg.audioBarH = GetSystemMetrics(SM_CYSCREEN) - 8;   // ★ 纵向初始值：接近满屏（屏高 -8）
     saveConfig(g_cfg);
     initAudioBar(GetModuleHandleW(nullptr));
-    setAudioBarMovedHook([](int x, int y) {
-        g_cfg.audioBarX = x; g_cfg.audioBarY = y;
-        saveConfig(g_cfg);
-    });
+    audioWire();    // 音频条的接线（见 src/audio/audio_wire.cpp）
     setAudioBarGeometry(g_cfg.audioBarW, g_cfg.audioBarH, g_cfg.audioBarDir);
     setAudioBarPos(g_cfg.audioBarX, g_cfg.audioBarY);
 
@@ -1154,58 +1079,7 @@ int main() {
 
     // 启动分类里的快捷方式（网格点击）。
     // 走和标签面板同一条启动路径，参数/工作目录处理才一致。
-    g_island.onLaunchShortcut = [](int index) {
-        const std::vector<Shortcut>* items = nullptr;
-        if (g_cfg.islandCategory == "__all__") {
-            items = &g_cfg.islandShortcuts;
-        } else {
-            for (const Tab& t : g_cfg.tabs) {
-                if (t.id == g_cfg.islandCategory) { items = &t.shortcuts; break; }
-            }
-        }
-        if (!items || index < 0 || index >= (int)items->size()) return;
-        const Shortcut& s = items->at(index);
-        // 与标签面板同一条启动路径：规范化路径 + 传 args
-        std::wstring target = shellPath(s.targetPath);
-        if (target.empty()) return;
-        std::wstring args = s.args;
-        ::AllowSetForegroundWindow(ASFW_ANY);   // ★ 允许新进程把窗口带到前台
-        HINSTANCE r = ::ShellExecuteW(nullptr, L"open", target.c_str(),
-                                      args.empty() ? nullptr : args.c_str(),
-                                      nullptr, SW_SHOWNORMAL);
-        const INT_PTR code = (INT_PTR)r;
-        logf("island: 启动 %s -> %lld", toUtf8(target).c_str(), (long long)code);
-
-        // ⚠ 启动成功后收起面板。
-        //
-        //   用户点快捷方式 = 他要去用那个程序了，
-        //   面板还挡在桌面上就碍事。
-        //
-        //   只在成功时收：ShellExecute 的返回值 > 32 才算成功
-        //   （<= 32 是各种错误码，这是 Win32 的老约定）。
-        //   失败时留着面板 —— 用户能立刻再点一次，不用重新打开面板。
-        if (code > 32) {
-            g_island.hide();
-            g_bar.setIslandOpen(false);
-            logf("island: 已收起面板（启动成功）");
-        }
-    };
-
-    // "打开文件位置"用得到
-    g_island.onLaunchPath = [](const std::wstring& target) {
-        // /select, 前缀是 explorer 的参数，其余按普通路径打开
-        if (target.rfind(L"/select,", 0) == 0) {
-            std::wstring p = target.substr(8);
-            std::wstring arg = L"/select,\"" + p + L"\"";
-            ::AllowSetForegroundWindow(ASFW_ANY);   // ★ 允许新进程把窗口带到前台
-            ::ShellExecuteW(nullptr, L"open", L"explorer.exe", arg.c_str(),
-                            nullptr, SW_SHOWNORMAL);
-        } else {
-            ::AllowSetForegroundWindow(ASFW_ANY);   // ★ 允许新进程把窗口带到前台
-            ::ShellExecuteW(nullptr, L"open", target.c_str(), nullptr, nullptr,
-                            SW_SHOWNORMAL);
-        }
-    };
+    islandWire();   // 岛台的回调（见 src/island/island_wire.cpp）
 
     // 岛台改了配置（分类切换、加快捷方式）→ 存盘
     islandWire();   // 岛台模块的接线（已搬到 src/island/island_wire.cpp）
@@ -1314,7 +1188,7 @@ int main() {
     taskbarService().Stop();
     g_settings.close();
     if (hk) UnregisterHotKey(g_msgWnd, kHotkeyHideBar);
-    if (g_searchHotkeyOk) UnregisterHotKey(g_msgWnd, kHotkeySearch);
+    if (searchHotkeyOk()) UnregisterHotKey(g_msgWnd, kHotkeySearch);
     g_search.destroy();
     destroyAudioBar();
     g_panel.destroy();
@@ -1356,6 +1230,7 @@ void            toggleIslandPanelWire(RECT btn) { ::toggleIslandPanel(btn); }
 bool            applySettingKey(const std::string& key) { return ::applySetting(key); }
 ContextMenuHooks makeHooksWire() { return hr::makeHooks(); }
 bool& dark() { return ::g_dark; }
+bool& searchHotkeyOk() { return ::g_searchHotkeyOk; }
 void hidePanelWire() { ::hidePanel(); }
 void showPanelForTabWire(int idx, RECT bounds, bool force) { ::showPanelForTab(idx, bounds, force); }
 }  // namespace hr

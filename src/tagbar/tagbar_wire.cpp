@@ -16,6 +16,8 @@
 #include "hr/settings/settings_wire.h"   // openSettings()
 #include "hr/shared/config.h"
 #include "hr/shared/menu.h"              // showContextMenu()
+#include <string>
+
 #include "hr/tagbar/tabs_menu_wire.h"    // makeHooks()
 
 namespace hr {
@@ -112,6 +114,43 @@ void tagbarWire() {
         if (tab < 0) tab = bar().active();
         showContextMenu(panel().hwnd(), tab, shortcutIndex, pt.x, pt.y, dark(), makeHooks());
     };
+}
+
+// 标签栏/悬停面板相关的设置键生效。
+//
+// 透明度、玻璃/壁纸模式、快捷方式字号、壁纸 —— 都只影响"标签栏 + 悬停面板"这一摊
+// （岛台只是跟着刷新外观，所以这里也一并调它的 refreshAppearance()）。
+bool tagbar_applySetting(const std::string& key, bool& handled) {
+    handled = true;
+    if (key == "hover_mode") {
+        hidePanelWire();
+        bar().setActive(-1);
+    } else if (key == "panel_opacity") {
+        // 全局面板透明度变了：各面板按新 alpha 重新出帧
+        hidePanelWire();
+        bar().refreshBackdrop(false);
+        bar().onConfigChanged();
+        panel().onConfigChanged();
+        island().refreshAppearance();
+    } else if (key == "glass_mode" || key == "wallpaper_mode") {
+        hidePanelWire();
+        bar().refreshBackdrop(true);
+        bar().onConfigChanged();
+        panel().onConfigChanged();
+        // ★ 岛台面板也得跟着变 —— 原来只通知了标签栏和标签面板，
+        //   结果关掉玻璃后岛台还是旧样子（用户说的"透明不实时更新"）。
+        island().refreshAppearance();
+    } else if (key == "shortcut_font_size") {
+        panel().setFontSize(cfg().shortcutFontSize);
+        panel().onConfigChanged();
+    } else if (key == "wallpaper") {
+        hidePanelWire();
+        panel().onConfigChanged();
+        island().refreshAppearance();
+    } else {
+        handled = false;
+    }
+    return true;
 }
 
 }  // namespace hr
