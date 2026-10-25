@@ -25,6 +25,7 @@
 #include "hr/tb/xaml/injector.h"
 #include "hr/text/theme.h"
 #include "hr/app/app_context.h"
+#include "hr/settings/settings_wire.h"
 
 using namespace hr;
 
@@ -944,8 +945,7 @@ void openSettings() {
     }
     g_settings.setActiveTab(g_bar.active());
     logf("settings: 设置回调");
-    g_settings.onSettingChanged = [](const std::string& key) -> bool { return applySetting(key); };
-    g_settings.onQuit = []() { PostMessageW(g_msgWnd, WM_CLOSE, 0, 0); };
+    settingsWire();   // 设置模块的接线（已搬到 src/settings/settings_wire.cpp）
     logf("settings: 调 open()");
     const bool ok = g_settings.open(GetModuleHandleW(nullptr), &g_cfg, g_dark, kVersion);
     logf("settings: open() 返回 %d", (int)ok);
@@ -1399,23 +1399,6 @@ LRESULT CALLBACK msgProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 }
 
 
-// ═══════════════════════════════════════════════════════════════════════════
-//  应用上下文访问器（见 include/hr/app/app_context.h）
-//
-//  这些对象原本定义在上面的匿名命名空间里（内部链接），各模块的接线文件拿不到。
-//  这里只提供"返回引用"的薄包装，不改变任何行为；新模块在此加一行即可。
-// ═══════════════════════════════════════════════════════════════════════════
-namespace hr {
-Config&         cfg()        { return g_cfg; }
-BarWindow&      bar()        { return g_bar; }
-HoverPanel&     panel()      { return g_panel; }
-IslandWindow&   island()     { return g_island; }
-IslandButton&   islandBtn()  { return g_islandBtn; }
-SearchWindow&   search()     { return g_search; }
-SettingsWindow& settings()   { return g_settings; }
-HWND            msgWnd()     { return g_msgWnd; }
-bool            applySettingKey(const std::string& key) { return ::applySetting(key); }
-}  // namespace hr
 
 }  // namespace
 
@@ -1748,3 +1731,21 @@ int main() {
     logf("===== 已退出 =====");
     return 0;
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  应用上下文访问器（见 include/hr/app/app_context.h）
+//
+//  这些对象原本定义在上面的匿名命名空间里（内部链接），各模块的接线文件拿不到。
+//  这里只提供"返回引用"的薄包装，不改变任何行为；新模块在此加一行即可。
+// ═══════════════════════════════════════════════════════════════════════════
+namespace hr {
+Config&         cfg()        { return g_cfg; }
+BarWindow&      bar()        { return g_bar; }
+HoverPanel&     panel()      { return g_panel; }
+IslandWindow&   island()     { return g_island; }
+IslandButton&   islandBtn()  { return g_islandBtn; }
+SearchWindow&   search()     { return g_search; }
+SettingsWindow& settings()   { return g_settings; }
+HWND            msgWnd()     { return g_msgWnd; }
+bool            applySettingKey(const std::string& key) { return ::applySetting(key); }
+}  // namespace hr
