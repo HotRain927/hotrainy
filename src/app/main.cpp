@@ -1718,4 +1718,5 @@ DWORD&          iconClickTick()   { return g_iconClickTick; }
 DWORD&          pendingCloseTick() { return g_pendingCloseTick; }
 void            toggleIslandPanelWire(RECT btn) { ::toggleIslandPanel(btn); }
 bool            applySettingKey(const std::string& key) { return ::applySetting(key); }
+ContextMenuHooks makeHooksWire() { return ::makeHooks(); }
 }  // namespace hr

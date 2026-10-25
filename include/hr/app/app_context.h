@@ -12,6 +12,7 @@
 #include <windows.h>
 
 #include "hr/shared/config.h"
+#include "hr/shared/menu.h"
 #include "hr/tagbar/bar.h"
 #include "hr/tagbar/panel.h"
 #include "hr/island/island.h"
@@ -38,5 +39,8 @@ void toggleIslandPanelWire(RECT btn);
 
 // 设置项生效入口（main.cpp 内部 applySetting 的外部包装，故意不同名以免重载歧义）
 bool applySettingKey(const std::string& key);
+
+// 包装 main.cpp 内部的 makeHooks()（返回自定义类型 ContextMenuHooks，自动生成器抓不到，手工补）
+ContextMenuHooks makeHooksWire();
 
 }  // namespace hr
