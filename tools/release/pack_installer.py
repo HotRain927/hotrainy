@@ -1,5 +1,3 @@
-# NOTE: paths in this script are absolute (C:\hot_rain\...).
-# Adjust them for your machine - see docs/发布流程.md (Release process).
 import io, os, struct, sys
 
 DIST = r"C:\hot_rain\dist_v3"

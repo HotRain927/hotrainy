@@ -1,6 +1,4 @@
-﻿## NOTE: paths in this script are absolute (C:\hot_rain\...).
-## Adjust them for your machine - see docs/发布流程.md (Release process).
-# publish.ps1 — 一键把 hotrainy 发布到 GitHub（建仓库 + 推送 + 发 Release + 传安装包）
+﻿# publish.ps1 — 一键把 hotrainy 发布到 GitHub（建仓库 + 推送 + 发 Release + 传安装包）
 #
 # 用法（双击同目录的 发布到GitHub.cmd 即可，或手动）：
 #   powershell -NoProfile -ExecutionPolicy Bypass -File publish.ps1
@@ -117,6 +115,20 @@ $ErrorActionPreference = $prevEAP
 Pop-Location
 Ok "已推送到 origin/main"
 
+# 迭代模式：把已有 tag 移动到当前提交（不删除、不新建 Release）
+$headSha = (Invoke-RestMethod -Uri "https://api.github.com/repos/$owner/$RepoName/commits/main" -Headers $headers -Method Get).sha
+$tagRef = "https://api.github.com/repos/$owner/$RepoName/git/refs/tags/$Tag"
+try {
+    $cur = Invoke-RestMethod -Uri $tagRef -Headers $headers -Method Get
+    if ($cur.object.sha -ne $headSha) {
+        $null = Invoke-RestMethod -Uri $tagRef -Headers $headers -Method Patch -Body ([Text.Encoding]::UTF8.GetBytes((@{ sha = $headSha; force = $true } | ConvertTo-Json))) -ContentType "application/json; charset=utf-8"
+        Ok "tag $Tag 已移动到 $($headSha.Substring(0,10))"
+    } else { Ok "tag $Tag 已指向最新提交" }
+} catch {
+    $null = Invoke-RestMethod -Uri "https://api.github.com/repos/$owner/$RepoName/git/refs" -Headers $headers -Method Post -Body ([Text.Encoding]::UTF8.GetBytes((@{ ref = "refs/tags/$Tag"; sha = $headSha } | ConvertTo-Json))) -ContentType "application/json; charset=utf-8"
+    Ok "tag $Tag 已创建 -> $($headSha.Substring(0,10))"
+}
+
 Step 5 "创建 Release $Tag"
 $relBody = Get-Content $RelNotesFile -Raw -Encoding UTF8
 # 去掉文件开头的归档说明，从 "# 中文" 开始作为发布正文
@@ -126,7 +138,9 @@ $relPayload = @{ tag_name = $Tag; name = $RelTitle; body = $relBody; draft = $fa
 $rel = $null
 try {
     $rel = Invoke-RestMethod -Uri "https://api.github.com/repos/$owner/$RepoName/releases/tags/$Tag" -Headers $headers -Method Get
-    Warn "Release $Tag 已存在，将复用并覆盖附件"
+    $patchPayload = @{ name = $RelTitle; body = $relBody; draft = $false; prerelease = $false } | ConvertTo-Json -Depth 4
+    $rel = Invoke-RestMethod -Uri "https://api.github.com/repos/$owner/$RepoName/releases/$($rel.id)" -Headers $headers -Method Patch -Body ([Text.Encoding]::UTF8.GetBytes($patchPayload)) -ContentType "application/json; charset=utf-8"
+    Ok "Release $Tag 已原地更新（标题/正文刷新）"
 } catch {
     $rel = Invoke-RestMethod -Uri "https://api.github.com/repos/$owner/$RepoName/releases" -Headers $headers -Method Post -Body ([Text.Encoding]::UTF8.GetBytes($relPayload)) -ContentType "application/json; charset=utf-8"
     Ok "Release 已创建"
