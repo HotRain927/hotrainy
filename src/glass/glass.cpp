@@ -535,7 +535,19 @@ void Surface::buildFlatPanel(int opacityPercent, int radius, bool dark) {
     int p = opacityPercent;
     if (p < 0) p = 0;
     if (p > 100) p = 100;
-    (void)p;   // ★ 主体纯透明：不铺任何底色、不雾化（面板透出背后画面）
+    // ★ 主体「雾化」底 —— 这才是「面板透明度」该干的事：按百分比铺一层中性雾。
+    //   0 = 什么都不铺（纯透明，背后画面直接透出来）；推大 → 越来越像磨砂玻璃。
+    //
+    //   ⚠ 这里原来是 (void)p、什么都不铺，而滑块改成在提交时乘 SourceConstantAlpha ——
+    //     那会把**整帧**（含文字、图标、边框）一起变透明。用户反馈：
+    //       「面板透明度为啥是调的文字的透明度，应该是让面板背景一点点加点雾化」。
+    //   现在雾只铺在主体上，文字/图标/边框保持不透明。
+    if (p > 0) {
+        const uint32_t fogRgb = dark ? 0x00101216u : 0x00F1F3F7u;   // 只取 RGB
+        const int maxA = dark ? 0x8Cu : 0x74;                       // 100% 时的雾浓度
+        const uint32_t col = ((uint32_t)(maxA * p / 100) << 24) | fogRgb;
+        fillRoundRect(0, 0, w_, h_, radius, col);
+    }
 
     // ═══ 边框：一圈"看得清"的细边 + 内侧一道更亮的高光（玻璃的厚度感）═══════
     //   ① 最外 1px 暗轮廓 —— 壁纸是浅色时靠它把面板轮廓"描"出来

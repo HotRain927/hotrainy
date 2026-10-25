@@ -1430,7 +1430,7 @@ void IslandWindow::redraw() {
         BLENDFUNCTION blend = {AC_SRC_OVER, 0, 255, AC_SRC_ALPHA};
         POINT dst = {x_ - s, y_ - s};
         // ★ 全局面板透明度：滑块 0-100 作用在这一帧的整体 alpha 上
-        if (cfg_) { int _op = cfg_->panelOpacity; if (_op < 0) _op = 0; if (_op > 100) _op = 100; blend.SourceConstantAlpha = (BYTE)((int)blend.SourceConstantAlpha * _op / 100); }
+        // ★ 不再按「面板透明度」缩放整帧 alpha：滑块现在只把**背景**加雾（见 glass.cpp buildFlatPanel），否则连文字/图标/边框一起变透明。
         UpdateLayeredWindow(hwnd_, screen, &dst, &size, mem, &src, 0, &blend, ULW_ALPHA);
         SelectObject(mem, old);
         DeleteDC(mem);

@@ -520,7 +520,7 @@ void SettingsWindow::pushFrame() {
         POINT src = {0, 0};
         BLENDFUNCTION bf = {AC_SRC_OVER, 0, 255, AC_SRC_ALPHA};
         // ★ 全局面板透明度：滑块 0-100 作用在这一帧的整体 alpha 上
-        if (cfg_) { int _op = cfg_->panelOpacity; if (_op < 0) _op = 0; if (_op > 100) _op = 100; bf.SourceConstantAlpha = (BYTE)((int)bf.SourceConstantAlpha * _op / 100); }
+        // ★ 不再按「面板透明度」缩放整帧 alpha：滑块现在只把**背景**加雾（见 glass.cpp buildFlatPanel），否则连文字/图标/边框一起变透明。
         UpdateLayeredWindow(hwnd_, screen, &dst, &sz, mem, &src, 0, &bf, ULW_ALPHA);
         SelectObject(mem, old);
         DeleteDC(mem);
