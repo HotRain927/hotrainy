@@ -250,14 +250,8 @@ void BarWindow::setActive(int idx) {
 void BarWindow::setDark(bool dark) {
     if (dark_ == dark) return;
     dark_ = dark;
-    // ★ 文字颜色必须跟着「文字颜色」设置走：取 theme.cpp 里那一套全局玻璃调色板
-    //   （面板、岛台取的是同一个来源）。
-    //   ⚠ 之前 textMain_ / textDim_ 是成员默认值（写死 0xFFF5F5F7 / 0xFFC2C4CC，
-    //     正好等于深色那套），setDark() 没更新过它们 —— 设置里选「深色文字」
-    //     （dark_ = false）时，标签栏还在画白字，跟设置对不上。
-    const GlassPalette& p = glassPalette(dark_);
-    textMain_ = p.text;
-    textDim_ = p.textDim;
+    // 文字颜色不在这里定：全界面统一"白字黑边"，由 Surface::setGlobalTextStyle()
+    // 在 drawText 里处理（见 main.cpp 启动处）。这里只切玻璃深浅（边框那两道边的颜色）。
     rebuildBase();
     redraw();
 }
@@ -331,10 +325,13 @@ void BarWindow::tickBackdrop() {
 void BarWindow::rebuildBase() {
     if (width_ <= 0 || height_ <= 0) return;
     base_.create(width_, height_);
-    const int radius = px(8);
-    // ★ 与所有面板同一套：纯色底（可为 0 = 纯透明）+ 恒定极细边框
-    const int op = cfg_ ? cfg_->panelOpacity : 0;
-    base_.buildFlatPanel(op, radius, dark_);
+    // ★ 标签栏自己**不再画那圈边框**（用户："标签栏下面那个黑线边可以删掉吗"）：
+    //   整条栏是纯透明底，边框交给每个标签 / 每个右侧图标各自那圈框去画
+    //   （见 redraw 里的 strokeGlassEdge）。这样栏的下沿不会再有横贯全屏的一条线。
+    //   ⚠ 底变纯透明之后，分层窗口对鼠标会"穿透"（命中测试只看 alpha）——
+    //     所以 redraw 里必须调 ensureHitTestableArea() 把命中区补回来，
+    //     否则标签点不动、也悬停不了。
+    base_.clear();
 }
 
 void BarWindow::redraw() {
@@ -383,7 +380,8 @@ void BarWindow::redraw() {
             if (hov) frame_.fillRoundRect(bx + 2, boxY + 1, bw - 4, boxH - 2, tabR, p.capsule);
             frame_.strokeGlassEdge(bx, boxY, bw, boxH, tabR, dark_, hov ? 1.5 : 1.0);
         }
-        frame_.addHairline(dark_);
+        // （这里原来有一句 frame_.addHairline(dark_)：在栏的下沿画一条横贯全屏的线。
+        //   用户要求删掉 —— 每个标签/图标现在都有自己的框，那条线只会多一条黑边。）
     } else {
         // 普通模式：格子底色 + 分隔线 + 激活底部强调线（悬停格用 hover 底色，对照 tab_bar.py:361）
         for (int i = 0; i < (int)tabRects_.size(); ++i) {
@@ -458,6 +456,11 @@ void BarWindow::redraw() {
         RECT r = {ix1, 0, ix1 + iconW_, height_};
         frame_.drawText(kGlyphs[i], r, (float)pt(12), color, 1, false, L"Segoe UI Symbol");
     }
+
+    // ★ 栏底是纯透明的 → 分层窗口会把鼠标穿透掉；把命中区补回来，
+    //   否则标签/图标既点不动也悬停不了（命中测试只看 alpha）。
+    RECT barRc = {0, 0, width_, height_};
+    frame_.ensureHitTestableArea(barRc, px(8));
 
     HDC screen = GetDC(nullptr);
     HBITMAP bmp = frame_.createPremultipliedBitmap(screen);

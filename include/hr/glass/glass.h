@@ -140,6 +140,17 @@ public:
     // ⚠ 透明度直接由 color 的 alpha 控制（GDI+ 的 SolidBrush 支持），
     //   不需要额外的 opacity 参数。
     //   想让文字跟着面板透明，就传一个 alpha 低一些的颜色。
+    // ★ 全局文字样式：从此所有 drawText 一律"白字黑边"（用户口径）。
+    //
+    //   forceWhite = true 时忽略调用方给的 RGB，只保留它原来的**主/次层次**
+    //   （亮的主文字 → 更实的白；暗的次要文字 → 稍淡的白），再统一描一圈黑边。
+    //   这样做的好处：不管底下是浅色壁纸还是深色窗口，字都读得清 ——
+    //   纯深色字在深色底上糊、纯白字在浅色底上糊，只有"白字黑边"两边都成立。
+    //
+    //   描边 = 用黑色在 8 个方向各画一遍，最后把主色压上去（不需要 GDI+ 的路径描边）。
+    //   outlineColor 的 alpha = 0 表示关闭描边。
+    static void setGlobalTextStyle(uint32_t outlineColor, bool forceWhite);
+
     void drawText(const wchar_t* text, RECT rc, float sizePx, uint32_t color, int align,
                   bool bold, const wchar_t* family = L"Microsoft YaHei");
     // 画位图（图标）。原样画（不额外透明）。

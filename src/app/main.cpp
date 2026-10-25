@@ -1430,16 +1430,22 @@ int main() {
         return 1;
     }
 
+    // ★ 全界面文字统一"白字黑边"（用户口径）：在创建任何窗口之前设一次。
+    //   之后所有 drawText 都忽略调用方给的 RGB、只保留明暗层次，并在外面描一圈黑边 ——
+    //   浅色壁纸和深色窗口上都能读清。
+    Surface::setGlobalTextStyle(0xC0000000u, true);
+
     if (!g_bar.create(GetModuleHandleW(nullptr), &g_cfg)) return 1;
     // 永远深色玻璃（用户定调）：不判深浅、不随背景翻色，亮度压制在玻璃管线里做
     g_dark = true;
-    // ★ 所有面板的文字颜色统一跟随设置里的「文字颜色」（已删掉「自动」）：
-    //   「浅色」= 白字 -> 用深色主题；「深色」= 深色文字 -> 用浅色主题。
-    const bool panelDark = (g_cfg.taskbarTextColor == L"light");
+    // ★ 「文字颜色」设置只作用于**任务栏右侧那些系统文字**（走注入侧的 setTextMode），
+    //   不再驱动各面板的主题深浅 —— 面板/岛台/设置/标签栏的文字是固定的"白字黑边"，
+    //   跟这个设置无关（用户："其他的别让他随着改了"）。
+    const bool panelDark = true;
     g_bar.setDark(panelDark);
     g_bar.onDarkChanged = [](bool d) {
         g_dark = d;
-        g_panel.setDark(g_cfg.taskbarTextColor == L"light");   // 深色/浅色文字 -> 主题深浅（lambda 内不能捕获局部量）
+        g_panel.setDark(true);   // 面板恒定深色玻璃（文字已是固定"白字黑边"，不跟设置变）
         g_search.setDark(d);
         setDialogDark(d);
     };

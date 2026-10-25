@@ -263,6 +263,10 @@ void overlayVGrad(std::vector<uint32_t>& px, int w, int h, uint32_t tint, double
     }
 }
 
+// ★ 全局文字样式（见 glass.h 的 setGlobalTextStyle）——由 main.cpp 启动时设一次。
+uint32_t g_textOutline = 0;        // alpha = 0 → 不描边
+bool g_textForceWhite = false;
+
 // 圆角遮罩：cover ∈ [0,1] 的覆盖率（到圆角矩形边界的有符号距离场）
 //
 // ⚠ 旧版把圆心算成 (r, r) / (w-r-1, h-r-1)，只有矩形足够"厚"时才成立。
@@ -967,6 +971,17 @@ void Surface::strokeGlassEdge(int x, int y, int w, int h, int radius, bool dark,
 void Surface::drawText(const wchar_t* text, RECT rc, float sizePx, uint32_t color, int align,
                        bool bold, const wchar_t* family) {
     if (!text || !*text) return;
+
+    // ★ 全局"白字黑边"（见 glass.h）：把所有调用方给的颜色统一成白色，
+    //   但保留它原来的明暗层次 —— 用原色亮度当白字的 alpha。
+    uint32_t outline = g_textOutline;
+    if (g_textForceWhite) {
+        long lev = std::lround(luminance(color));   // 0..255
+        if (lev < 150) lev = 150;                   // 次要文字也别太淡
+        if (lev > 255) lev = 255;
+        color = ((uint32_t)lev << 24) | 0x00FFFFFFu;
+    }
+
     Bitmap bmp(w_, h_, w_ * 4, PixelFormat32bppARGB, (BYTE*)px_.data());
     Graphics g(&bmp);
     g.SetTextRenderingHint(TextRenderingHintAntiAlias);
@@ -987,7 +1002,27 @@ void Surface::drawText(const wchar_t* text, RECT rc, float sizePx, uint32_t colo
     fmt.SetFormatFlags(StringFormatFlagsNoWrap);
 
     RectF rect((REAL)rc.left, (REAL)rc.top, (REAL)(rc.right - rc.left), (REAL)(rc.bottom - rc.top));
+
+    // ★ 黑边：先在 8 个方向各画一遍黑字，再把主色压上去 —— 字外面就多了一圈黑描边。
+    //   （不用 GDI+ 的路径描边：AddString 的字距/换行跟 DrawString 不一定一致，
+    //     8 方向偏移虽然多画几遍，但字形与原来完全一样。）
+    if (aOf(outline) > 0) {
+        SolidBrush ob(Color(aOf(outline), rOf(outline), gOf(outline), bOf(outline)));
+        for (int oy = -1; oy <= 1; ++oy) {
+            for (int ox = -1; ox <= 1; ++ox) {
+                if (ox == 0 && oy == 0) continue;
+                RectF orc(rect.X + ox, rect.Y + oy, rect.Width, rect.Height);
+                g.DrawString(text, -1, &font, orc, &fmt, &ob);
+            }
+        }
+    }
+
     g.DrawString(text, -1, &font, rect, &fmt, &brush);
+}
+
+void Surface::setGlobalTextStyle(uint32_t outlineColor, bool forceWhite) {
+    g_textOutline = outlineColor;
+    g_textForceWhite = forceWhite;
 }
 
 std::wstring Surface::fitText(const wchar_t* text, float sizePx, int availPx,
@@ -1123,8 +1158,13 @@ void Surface::drawBitmapFaded(HBITMAP bmp, int x, int y, int size, double opacit
             const double ad = aOf(dst) / 255.0;
             const double ao = as + ad * (1.0 - as);
             if (ao <= 0.0001) continue;
-            const double pr = r * opacity, pg = g * opacity, pb = b * opacity;
-            const double sr = as > 0 ? pr / as : 0.0;
+            //   ⚠ 单位必须统一！r/g/b 来自 GetDIBits，是 0..255；dst 的分量这里按 0..1 取。
+            //     上一版把 0..255 的源色直接丢给 to255()（内部又 ×255）——
+            //     每个通道都饱和成 255，图标于是只剩一个**白色剪影**（alpha 还对，
+            //     颜色全白）：实测 WorkBuddyAI 的绿色图标、dsh 的白底鲸鱼图标都变成纯白方块。
+            //     现在源色也折成 0..1 再算。
+            const double pr = r * opacity / 255.0, pg = g * opacity / 255.0, pb = b * opacity / 255.0;
+            const double sr = as > 0 ? pr / as : 0.0;   // 0..1 的直通色
             const double sg = as > 0 ? pg / as : 0.0;
             const double sb = as > 0 ? pb / as : 0.0;
             const double dr = rOf(dst) / 255.0, dg = gOf(dst) / 255.0, db = bOf(dst) / 255.0;

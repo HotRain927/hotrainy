@@ -57,24 +57,14 @@ void HoverPanel::destroy() {
     hwnd_ = nullptr;
 }
 
-// ★ 文字颜色必须跟着设置走。
-//
-//   这里取的是 theme.cpp 里那一套全局玻璃调色板（深/浅各一套），
-//   和岛台、标签栏取的是同一个来源。
-//
-//   ⚠ 之前 textMain_ / textDim_ 是成员默认值（写死 0xFFF5F5F7 / 0xFFC2C4CC，正好等于
-//     深色那套），setDark() 根本没更新它们 —— 于是设置里选了「深色文字」
-//     （dark_ = false）时，面板和标签栏还是画白字，跟设置对不上。
-void HoverPanel::applyTextColors() {
-    const GlassPalette& p = glassPalette(dark_);
-    textMain_ = p.text;
-    textDim_ = p.textDim;
-}
-
+// ★ 文字颜色不再由这里决定：全界面统一"白字黑边"，由 glass.cpp 的
+//   Surface::setGlobalTextStyle() 在 drawText 里统一处理（main.cpp 启动时设一次）。
+//   所以 textMain_ / textDim_ 只用来表达**明暗层次**（次要文字稍淡），具体颜色被忽略。
+//   也正因为如此，这里不再跟随设置里的「文字颜色」——
+//   那个设置的作用范围只剩任务栏右侧那些系统文字（见 main.cpp 的注释）。
 void HoverPanel::setDark(bool dark) {
     if (dark_ == dark) return;
     dark_ = dark;
-    applyTextColors();
     baseValid_ = false;
     if (visible_) rebuildBase(), redraw();
 }

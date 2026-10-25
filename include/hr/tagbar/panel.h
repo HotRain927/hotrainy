@@ -55,7 +55,6 @@ private:
     void setScroll(int row);
     void buildScrollbar();
     void launch(int rowIndex);
-    void applyTextColors();        // 文字颜色跟随「文字颜色」设置（取全局那一套调色板）
 
     // 圆角半径与外阴影留白（都用 px() 换算，DPI 变了跟着变）
     //
