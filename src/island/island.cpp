@@ -89,7 +89,7 @@ const UINT_PTR kDragTimerId = 0x71;
 // 手机桌面拖动时，被挤开的图标大约用 200ms 滑到位 ——
 // 太短（<120ms）显得生硬像瞬移，太长（>300ms）会觉得拖泥带水、
 // 跟手性变差。200ms 配 easeOutCubic 是接近 iOS/Android 主屏的手感。
-const int kDragShiftMs = 200;
+const int kDragAnimTauMs = 65;   // 让位缓动的指数时间常数（约 3τ 收敛，够快又不生硬）
 
 // 分类「全部」的保留 id
 const char* kAllCategory = "__all__";
@@ -786,6 +786,49 @@ int IslandWindow::shadowInset() const {
     return islandShadowPx();
 }
 
+// ★ 让位动画：每帧把每格"当前显示位置"朝它该去的位置推进一步。
+//
+//   指数缓动 + 时间驱动（dt 用 GetTickCount 算）：不管 WM_TIMER 稳不稳、
+//   掉不掉帧，收敛速度都一样，所以看起来是顺滑的滑动而不是"一顿一顿"。
+//   目标格中途变化也**不需要重置** —— 换个方向继续滑就是了。
+void IslandWindow::stepCellAnim() {
+    if (dragCell_ < 0 || dragPageStart_ < 0 || cellAnimX_.empty()) return;
+
+    const DWORD now = ::GetTickCount();
+    DWORD dt = animLastTick_ ? (now - animLastTick_) : 16;
+    animLastTick_ = now;
+    if (dt > 100) dt = 100;                     // 卡顿/切后台回来别一步到位
+    const double k = 1.0 - std::exp(-(double)dt / (double)kDragAnimTauMs);
+
+    for (int i = 0; i < (int)cellAnimX_.size(); ++i) {
+        // 被拖的那格跟着鼠标走，不参与让位
+        if (i == dragCell_ - dragPageStart_) continue;
+        float tx = 0.f, ty = 0.f;
+        dragFinalPos(dragPageStart_ + i, tx, ty);
+        cellAnimX_[i] += (tx - cellAnimX_[i]) * (float)k;
+        cellAnimY_[i] += (ty - cellAnimY_[i]) * (float)k;
+    }
+}
+
+// 第 origIdx 项在"松手后的最终布局"里落在哪个格子（返回左上角，网格坐标）。
+//
+// 映射与 moveShortcut 的 erase(from)+insert(to) 完全一致 ——
+// 所以动画的终点就是松手后的落点，松手那一刻不会"跳一下"。
+void IslandWindow::dragFinalPos(int origIdx, float& tx, float& ty) const {
+    const int cols = cols_ > 0 ? cols_ : 1;
+    int fin = origIdx;
+    const int dFrom = dragCell_, dTo = dragTarget_;
+    if (dFrom >= 0 && dTo >= 0) {
+        if (origIdx == dFrom) fin = dTo;                                        // 被拖的去目标位
+        else if (dFrom < dTo && origIdx > dFrom && origIdx <= dTo) fin = origIdx - 1;
+        else if (dFrom > dTo && origIdx >= dTo && origIdx < dFrom) fin = origIdx + 1;
+    }
+    // fin 是全局下标 → 减掉页起始才是页内行列
+    const int slot = fin - (dragPageStart_ >= 0 ? dragPageStart_ : 0);
+    tx = (float)(gridX_ + (slot % cols) * cellW_);
+    ty = (float)(gridY_ + (slot / cols) * cellH_);
+}
+
 void IslandWindow::drawGridCell(int index, int cx, int cy, int cw, int ch, bool hover) {
     // ★ 文字和图标都用**原始 alpha**，不再按面板透明度折算。
     //
@@ -1283,58 +1326,43 @@ void IslandWindow::redraw() {
             const int dFrom = dragging ? dragCell_ : -1;
             const int dTo = dragging ? dragTarget_ : -1;
 
-            // 缓动：easeOutCubic，起步快后面慢，像被推着滑过去
-            double ease = dragShiftT_;
-            if (ease < 0.0) ease = 0.0;
-            if (ease > 1.0) ease = 1.0;
-            ease = 1.0 - std::pow(1.0 - ease, 3.0);
-
-            // ⚠ 按"最终顺序"算位置，不是按格前后推。
-            //
-            //   用户要的是：被挤开的图标挪到**它下次会在的位置**。
-            //   即：把 from 拖到 to 之后，moveShortcut 会让中间那些项
-            //   依次挪一格 —— 动画里每一项就该朝那个最终位置走。
-            //
-            //   所以先算出"最终第 k 位放的是原来的哪一项"，
-            //   再让那一项从原位置缓动到第 k 位。
-            //
-            //   moveShortcut 是 erase(from) + insert(to)，它的逆映射是：
-            //     · from < to：最终位置 k 的元素，来自原来的 k+1（在 (from,to] 区间内）
-            //     · from > to：最终位置 k 的元素，来自原来的 k-1（在 [to,from) 区间内）
-            //     · 区间外：位置不变
-            //
-            //   这样算出来的位置和松手后真正落定的位置**完全一致**，
-            //   松手时不会有"跳一下"的割裂感。
-            auto finalIndexOf = [&](int origIdx) -> int {
-                if (!dragging || dTo < 0 || dFrom < 0) return origIdx;
-                if (origIdx == dFrom) return dTo;                     // 被拖的去目标位
-                if (dFrom < dTo && origIdx > dFrom && origIdx <= dTo) return origIdx - 1;
-                if (dFrom > dTo && origIdx >= dTo && origIdx < dFrom) return origIdx + 1;
-                return origIdx;                                        // 原位不动
-            };
+            // ★ 让位动画：每格独立缓动（说明见 island.h）。
+            //   旧做法是一个全局进度、每次目标格变化就重置为 0 ——
+            //   已经让开的格子会先弹回原位再推过去，快速划过几格时一顿一顿。
+            //   这里只负责"惰性初始化"和"不再拖动时清掉"，推进交给 stepCellAnim。
+            dragPageStart_ = dragging ? start : -1;
+            if (dragging) {
+                if ((int)cellAnimX_.size() != perPage) {
+                    cellAnimX_.assign((size_t)perPage, 0.f);
+                    cellAnimY_.assign((size_t)perPage, 0.f);
+                    for (int i = 0; i < perPage; ++i) {
+                        const int row0 = i / cols_, col0 = i % cols_;
+                        cellAnimX_[i] = (float)(gridX_ + col0 * cellW_);
+                        cellAnimY_[i] = (float)(gridY_ + row0 * cellH_);
+                    }
+                    animLastTick_ = 0;
+                }
+            } else if (!cellAnimX_.empty()) {
+                cellAnimX_.clear();
+                cellAnimY_.clear();
+                animLastTick_ = 0;
+            }
 
             for (int i = 0; i < perPage; ++i) {
                 const int idx = start + i;
                 if (idx >= total) break;
                 if (dragging && idx == dFrom) continue;   // 被拖的那个最后单独画
 
-                // 原位置（行列）
-                const int row0 = i / cols_;
-                const int col0 = i % cols_;
-                const int x0 = gridX_ + col0 * cellW_;
-                const int y0 = gridY_ + row0 * cellH_;
-
-                // 最终位置（按一维索引重算行列 —— 跨行时才对）
-                const int fin = finalIndexOf(idx);
-                const int row1 = fin / cols_;
-                const int col1 = fin % cols_;
-                const int x1 = gridX_ + col1 * cellW_;
-                const int y1 = gridY_ + row1 * cellH_;
-
-                // 从原位置缓动到最终位置
-                const int cx = x0 + (int)std::lround((x1 - x0) * ease);
-                const int cy = y0 + (int)std::lround((y1 - y0) * ease);
-
+                // 当前显示位置：拖动中取每格缓动的结果，否则就是它本来的格子
+                int cx, cy;
+                if (dragging && i < (int)cellAnimX_.size()) {
+                    cx = (int)std::lround(cellAnimX_[i]);
+                    cy = (int)std::lround(cellAnimY_[i]);
+                } else {
+                    const int row0 = i / cols_, col0 = i % cols_;
+                    cx = gridX_ + col0 * cellW_;
+                    cy = gridY_ + row0 * cellH_;
+                }
                 drawGridCell(idx, cx, cy, cellW_, cellH_, idx == hotCell_);
             }
 
@@ -1963,22 +1991,11 @@ layoutSearchEdit();     // 搜索框位置跟上就行
                     ::KillTimer(h, kDragAnimTimerId);
                     return 0;
                 }
-                if (dragShiftT_ < 1.0) {
-                    // ★ 时间驱动，不是帧驱动。
-                    //
-                    //   原来写的是 dragShiftT_ += 0.18 —— 每帧固定加一点。
-                    //   问题：WM_TIMER 的间隔并不稳定（系统忙时 16ms 会变成
-                    //   20~30ms），于是同一个让位动画时快时慢，
-                    //   观感就是"卡一下"。手机桌面的拖动之所以顺，
-                    //   正是因为动画时长由时间决定，跟帧率解耦。
-                    const double el = (double)(::GetTickCount() - dragShiftStart_);
-                    double t = el / (double)kDragShiftMs;
-                    if (t > 1.0) t = 1.0;
-                    if (t > dragShiftT_) {
-                        dragShiftT_ = t;
-                        redraw();
-                    }
-                }
+                // ★ 每帧推进每格的缓动，再重画。
+                //   stepCellAnim 内部按真实 dt 算缓动系数（时间驱动），
+                //   所以 WM_TIMER 抖动 / 掉帧都不会让动画忽快忽慢。
+                stepCellAnim();
+                redraw();
                 return 0;
             }
 
@@ -2002,7 +2019,7 @@ layoutSearchEdit();     // 搜索框位置跟上就行
                         }
                         dragCell_ = pressedCell_;
                         dragTarget_ = dragCell_;
-                        dragShiftT_ = 1.0;      // 初始就是"已就位"，没有待播动画
+                        cellAnimX_.clear();     // 进入拖动：每格缓动由 redraw 惰性初始化
                         logf("island: 长按 %lums，抓起第 %d 个快捷方式",
                              (unsigned long)held, dragCell_);
                         // ⚠ 这里就把动画定时器起起来，让它一直在跑。
@@ -2144,12 +2161,10 @@ layoutSearchEdit();     // 搜索框位置跟上就行
                 const int t = cellAt(mx, my);
                 if (t != dragTarget_) {
                     dragTarget_ = t;
-                    // 目标格变了 → 重启动让位动画（0 → 1 缓动）。
-                    // 定时器已经在跑，这里把进度清零并记下起始时刻
-                    // （进度是按真实时间算的，见 kDragShiftMs）。
-                    dragShiftT_ = 0.0;
-                    dragShiftStart_ = ::GetTickCount();
-                    dragShiftFrom_ = t;
+                    // ★ 目标格变了：**不需要重置任何进度**。
+                    //   每格独立缓动（stepCellAnim）会自己朝新目标继续滑 ——
+                    //   以前这里把全局进度清零，已经让开的格子会先弹回原位，
+                    //   就是"一顿一顿"的来源（用户："要顺滑地推动"）。
                 }
                 redraw();       // 每帧重画，图标才会跟着鼠标走
                 return 0;       // 拖动时不更新 hover
@@ -2239,8 +2254,8 @@ layoutSearchEdit();     // 搜索框位置跟上就行
                 dragStartPt_ = {mx, my};
                 dragCurPt_ = {mx, my};
                 dragTarget_ = -1;
-                dragShiftT_ = 1.0;
-                dragShiftFrom_ = -1;
+                cellAnimX_.clear();
+                cellAnimY_.clear();
                 ::SetCapture(h);                 // 抓住鼠标，移出窗口也能收到消息
 
                 // ⚠ 起定时器来判断长按。
