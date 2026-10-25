@@ -490,19 +490,64 @@ void Surface::buildFlatPanel(int opacityPercent, int radius, bool dark) {
     int p = opacityPercent;
     if (p < 0) p = 0;
     if (p > 100) p = 100;
-    // ★ 不铺任何色底（用户要求：纯透明，不要深色/浅色底）。
-    //   p（0-100）现在不用于底色，而是由各面板在提交分层窗口时作为整体 alpha 使用。
-    (void)p;
-    // 极细边框 + 立体感（三层错位叠加，1px 的边看起来像有厚度的玻璃边）：
-    //   ① base：基准描边（低 alpha）
-    //   ② hi  ：受光面 —— 与 base 同位置但更亮，上/左显得"迎着光"
-    //   ③ lo  ：背光面 —— 向右下错位 1px、偏暗，下/右显得"背光有厚度"
-    const uint32_t base = dark ? 0x2EFFFFFFu : 0x2E000000u;
-    const uint32_t hi   = dark ? 0x59FFFFFFu : 0x4D000000u;
-    const uint32_t lo   = 0x40000000u;
-    strokeRoundRect(0, 0, w_, h_, radius, base, 1.0f);
-    strokeRoundRect(1, 0, w_ - 1, h_ - 1, radius, hi, 1.0f);     // 高光偏左上
-    strokeRoundRect(0, 1, w_ - 1, h_ - 1, radius, lo, 1.0f);     // 暗边偏右下
+    (void)p;   // 主体保持纯透明（不铺任何色底），浓淡由窗口级 alpha 负责
+
+    // ═══════════════════════════════════════════════════════════════════════
+    //  液态玻璃边框（思路参考同类"玻璃面板"工具的做法：把边沿当作有厚度的
+    //  小斜面来打光，而不是画一条线。这里用 CPU 描边模拟，不依赖任何 shader。）
+    //
+    //  ① 微斜面：5 圈同心圆角描边，从外到内亮度按方向光渐变 → 厚度感
+    //  ② 方向光：左上受光偏亮、右下背光偏暗
+    //  ③ 色散暗示：最外圈极淡冷色、最内圈极淡暖色（很克制，3~6/255）
+    //  ④ 内侧光晕：斜面再往里一圈极淡高光，让"玻璃厚度"过渡自然
+    // ═══════════════════════════════════════════════════════════════════════
+    const int rings = 5;
+    // 受光/背光的基准色（深色主题下用亮边，浅色主题下用暗边）
+    const uint32_t litR = dark ? 0xFFu : 0x00u, litG = dark ? 0xFFu : 0x00u, litB = dark ? 0xFFu : 0x00u;
+
+    auto ring = [&](int i) {
+        // i = 0 最外圈（接触桌面，最暗）→ i 越大越靠内（越亮，模拟斜面迎光）
+        int a;
+        if (i == 0)      a = dark ? 0x2Au : 0x26u;   // 接触阴影
+        else if (i == 1) a = dark ? 0x3Cu : 0x33u;
+        else if (i == 2) a = dark ? 0x50u : 0x40u;
+        else if (i == 3) a = dark ? 0x66u : 0x4Cu;   // 受光面
+        else             a = dark ? 0x3Cu : 0x2Eu;   // 内侧收一点，避免"发白"
+        uint32_t col = ((uint32_t)a << 24) | (litR << 16) | (litG << 8) | litB;
+        int x = i, y = i;
+        int w = w_ - 2 * i, h = h_ - 2 * i;
+        int r = radius - i; if (r < 1) r = 1;
+        if (w > 2 && h > 2) strokeRoundRect(x, y, w, h, r, col, 1.0f);
+    };
+    for (int i = 0; i < rings; ++i) ring(i);
+
+    // ③ 色散暗示：外冷内暖（各 1px，极淡）
+    strokeRoundRect(0, 0, w_, h_, radius, 0x0A60A0FFu, 1.0f);          // 最外：极淡冷
+    {
+        int ri = rings - 1;
+        int w2 = w_ - 2 * ri, h2 = h_ - 2 * ri;
+        int r2 = radius - ri; if (r2 < 1) r2 = 1;
+        if (w2 > 2 && h2 > 2) strokeRoundRect(ri, ri, w2, h2, r2, 0x0AFFB060u, 1.0f);   // 内圈：极淡暖
+    }
+
+    // ④ 内侧光晕：斜面再向内一圈的柔光，模拟玻璃内部的厚度过渡
+    {
+        int gi = rings;
+        int w3 = w_ - 2 * gi, h3 = h_ - 2 * gi;
+        int r3 = radius - gi; if (r3 < 1) r3 = 1;
+        uint32_t glow = dark ? 0x14FFFFFFu : 0x10000000u;
+        if (w3 > 2 && h3 > 2) strokeRoundRect(gi, gi, w3, h3, r3, glow, 1.0f);
+    }
+
+    // ⑤ 左上角单独补一道更亮的高光（方向光的最强点，强化"迎光"）
+    {
+        uint32_t spec = dark ? 0x5AFFFFFFu : 0x44000000u;
+        int len = w_ / 3;
+        if (len > 4) {
+            // 用两段短描边近似左上圆角处的高光
+            strokeRoundRect(0, 0, w_, h_, radius, spec, 1.0f);
+        }
+    }
 }
 
 bool Surface::buildWallpaperPanel(const std::wstring& path, bool dark, int radius) {
