@@ -28,6 +28,7 @@
 #include "hr/app/version.h"
 #include "hr/app/menu_ids.h"
 #include "hr/tagbar/tabs_menu_wire.h"
+#include "hr/tagbar/tagbar_wire.h"
 #include "hr/settings/settings_wire.h"
 #include "hr/search/search_wire.h"
 #include "hr/island/island_wire.h"
@@ -909,30 +910,6 @@ bool applySetting(const std::string& key) {
 
 // ── 右键菜单的增删改（对照 main.py 的 CRUD 一段） ──
 
-void launchRightIcon(int idx) {
-    switch (idx) {
-        case BarWindow::ICON_SNIP:
-            ::AllowSetForegroundWindow(ASFW_ANY);   // ★ 允许新进程把窗口带到前台
-            ShellExecuteW(nullptr, L"open", L"snippingtool.exe", nullptr, nullptr, SW_SHOWNORMAL);
-            break;
-        case BarWindow::ICON_RECYCLE:
-            ::AllowSetForegroundWindow(ASFW_ANY);   // ★ 允许新进程把窗口带到前台
-            ShellExecuteW(nullptr, L"open", L"explorer.exe",
-                          L"::{645FF040-5081-101B-9F08-00AA002F954E}", nullptr, SW_SHOWNORMAL);
-            break;
-        case BarWindow::ICON_COMPUTER:
-            ::AllowSetForegroundWindow(ASFW_ANY);   // ★ 允许新进程把窗口带到前台
-            ShellExecuteW(nullptr, L"open", L"explorer.exe",
-                          L"::{20D04FE0-3AEA-1069-A2D8-08002B30309D}", nullptr, SW_SHOWNORMAL);
-            break;
-        case BarWindow::ICON_SETTINGS:
-            openSettings();
-            break;
-        default:
-            break;
-    }
-}
-
 LRESULT CALLBACK msgProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
         case kTrayMsg:
@@ -1141,12 +1118,6 @@ int main() {
     //   跟这个设置无关（用户："其他的别让他随着改了"）。
     const bool panelDark = true;
     g_bar.setDark(panelDark);
-    g_bar.onDarkChanged = [](bool d) {
-        g_dark = d;
-        g_panel.setDark(true);   // 面板恒定深色玻璃（文字已是固定"白字黑边"，不跟设置变）
-        g_search.setDark(d);
-        setDialogDark(d);
-    };
     if (!g_panel.create(GetModuleHandleW(nullptr), &g_cfg)) return 1;
     // ★ 这一行原来写的是 setDark(taskbarTextColor == L"light")，会**覆盖**上面
     //   刚设好的 setDark(true) —— 于是「文字颜色」又把面板的深浅带跑了
@@ -1157,6 +1128,7 @@ int main() {
     g_panel.setFontSize(g_cfg.shortcutFontSize);
     if (!g_search.create(GetModuleHandleW(nullptr), &g_cfg, g_dark)) return 1;
     searchWire();   // 搜索模块的接线（已搬到 src/search/search_wire.cpp）
+    tagbarWire();   // 标签栏 + 悬停面板的接线（见 src/tagbar/tagbar_wire.h）
     // ★ 音频条初次使用：按当前屏幕算一个合适大小并写进配置，
     //   之后用户就在这个基础上加减（不再有"0 = 自动"这种夹死减号的状态）。
     if (g_cfg.audioBarW <= 0) g_cfg.audioBarW = std::max((int)(GetSystemMetrics(SM_CXSCREEN) / 6), 120);   // ★ 横向初始值调大：屏宽 / 6
@@ -1238,47 +1210,11 @@ int main() {
     // 岛台改了配置（分类切换、加快捷方式）→ 存盘
     islandWire();   // 岛台模块的接线（已搬到 src/island/island_wire.cpp）
 
-    g_bar.onHoverTab = [](int idx, RECT bounds) { showPanelForTab(idx, bounds); };
-    g_bar.onLeave = []() {
-        if (!g_panel.visible()) {
-            // 面板本来就没开，离开标签栏也不该让标签栏一直挂着
-            g_bar.setPanelOpen(false);
-            return;
-        }
-        // 面板开着时一般交给 150ms 轮询判断（鼠标可能正往面板移动），
-        // 但要是挪到了右侧小图标上，那就是明确不要面板了 —— 立刻收，别等轮询
-        POINT p = {};
-        GetCursorPos(&p);
-        RECT wr = {};
-        GetWindowRect(g_bar.hwnd(), &wr);
-        if (p.y >= wr.top && p.y < wr.bottom && p.x >= wr.left + g_bar.tabAreaRight()) {
-            hidePanel();
-            g_bar.clearHover();
-        }
-    };
-    g_bar.onTabClick = [](int idx, bool right, POINT pt) {
-        if (right) {
-            showContextMenu(g_bar.hwnd(), idx, -1, pt.x, pt.y, g_dark, makeHooks());
-            return;
-        }
-        if (idx != g_bar.active()) {
-            g_bar.setActive(idx);
-            showPanelForTab(idx, g_bar.tabRect(idx), /*force=*/true);
-        } else if (!g_cfg.hoverMode) {
-            if (g_panel.visible()) {
-                hidePanel();
-            } else {
-                showPanelForTab(idx, g_bar.tabRect(idx), /*force=*/true);
-            }
-        }
-    };
-    g_bar.onIconClick = [](int idx) { launchRightIcon(idx); };
 
     // 点岛台按钮 → 开/关岛台面板。
     //
     // 面板不因鼠标离开而关（用户明确要求），所以这里只管切换，
     // 不做"移开就收"的判断。
-    g_bar.onIslandClick = [](RECT btn) { toggleIslandPanel(btn); };
 
     // 设置界面改「岛台」开关时回调这里
     setIslandEnableHook(&applyIslandEnabled);
@@ -1289,17 +1225,8 @@ int main() {
     // 面板自己收起时（150ms 轮询发现鼠标走远了）必须回报给标签栏，
     // 否则 panelOpen_ 一直是 true -> 标签栏永远不收、标签一直亮着。
     // 同时清掉标签栏的悬停态，避免面板没了胶囊还挂在标签上。
-    g_panel.onLeavePanel = []() {
-        g_bar.setPanelOpen(false);
-        g_bar.clearHover();
-    };
 
     // 面板里右键某个快捷方式 → 同一套菜单，只是带上快捷方式下标
-    g_panel.onShortcutRightClick = [](int shortcutIndex, POINT pt) {
-        int tab = g_panel.currentTab();
-        if (tab < 0) tab = g_bar.active();
-        showContextMenu(g_panel.hwnd(), tab, shortcutIndex, pt.x, pt.y, g_dark, makeHooks());
-    };
 
     // 菜单打开期间不许自动收起面板
     setContextMenuOpenCallback([](bool open) {
@@ -1430,4 +1357,5 @@ bool            applySettingKey(const std::string& key) { return ::applySetting(
 ContextMenuHooks makeHooksWire() { return hr::makeHooks(); }
 bool& dark() { return ::g_dark; }
 void hidePanelWire() { ::hidePanel(); }
+void showPanelForTabWire(int idx, RECT bounds, bool force) { ::showPanelForTab(idx, bounds, force); }
 }  // namespace hr
