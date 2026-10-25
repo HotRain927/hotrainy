@@ -254,6 +254,15 @@ void applyTaskbarState() {
     else if (!trans && island) stateTransOffIslandOn();
     else if (trans && !island) stateTransOnIslandOff();
     else                       stateTransOffIslandOff();
+
+    // ④ ★ 最后统一再套一次「文字颜色」。
+    //
+    //   四个状态分支都只管透明/岛台按钮，**完全不碰文字颜色** ——
+    //   而"关透明再开""换壁纸"这些路径会让注入侧把它交还给系统默认，
+    //   于是设置里明明是深色，任务栏右边却是浅色（用户："有时候跟设置不一致"）。
+    //   放在这里收口：不管走了哪个分支，结束时文字颜色一定等于设置里的那一档。
+    taskbarService().SetTextColor(g_cfg.taskbarTextColor);
+    taskbarService().ApplyTextColor();
 }
 
 void applyIslandEnabled(bool on) {

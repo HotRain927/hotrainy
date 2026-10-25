@@ -1000,6 +1000,24 @@ HRESULT autoAdjustTextColor() {
     return setTrayTextColor(shouldUseDarkText());
 }
 
+// ★ 记住最近一次的文字颜色策略。
+//
+//   用户反馈："任务栏右边文字颜色有时候跟设置里的不一致"。
+//   原来每次重新应用透明都固定走 autoAdjustTextColor()（按壁纸亮度自动），
+//   于是只要任务栏重新应用一次透明（重挂、壁纸变化…），
+//   用户在设置里手动选的深/浅色就被自动值盖掉了。
+//   现在重放时按记住的策略走 —— auto 才去按亮度算。
+enum class TrayTextMode { Auto, Dark, Light };
+TrayTextMode g_trayTextMode = TrayTextMode::Auto;
+
+HRESULT applyTrayTextMode() {
+    switch (g_trayTextMode) {
+        case TrayTextMode::Dark:  return setTrayTextColor(true);
+        case TrayTextMode::Light: return setTrayTextColor(false);
+        default:                  return autoAdjustTextColor();
+    }
+}
+
 // 处理一条来自主程序的命令
 void handleChannelCommand(HWND h) {
     ChannelCmd cmd = ChannelCmd::None;
@@ -1023,7 +1041,8 @@ void handleChannelCommand(HWND h) {
             if (SUCCEEDED(hr)) {
                 // 等一帧，让透明先真正呈现出来，否则采样到的是旧画面
                 ::Sleep(120);
-                HRESULT hrColor = autoAdjustTextColor();
+                // ★ 用记住的策略，不是无条件自动 —— 见 applyTrayTextMode 的说明
+                HRESULT hrColor = applyTrayTextMode();
                 tapLogf("channel: 应用透明后自动调整文字 -> 0x%08X", (unsigned)hrColor);
             }
             break;
@@ -1062,16 +1081,19 @@ void handleChannelCommand(HWND h) {
         }
 
         case ChannelCmd::SetTextDark:
+            g_trayTextMode = TrayTextMode::Dark;
             hr = setTrayTextColor(true);
             tapLogf("channel: 收到「文字改深色」-> 0x%08X", (unsigned)hr);
             break;
 
         case ChannelCmd::SetTextLight:
+            g_trayTextMode = TrayTextMode::Light;
             hr = setTrayTextColor(false);
             tapLogf("channel: 收到「文字改浅色」-> 0x%08X", (unsigned)hr);
             break;
 
         case ChannelCmd::AutoTextColor:
+            g_trayTextMode = TrayTextMode::Auto;
             hr = autoAdjustTextColor();
             tapLogf("channel: 收到「文字颜色自动」-> 0x%08X", (unsigned)hr);
             break;
