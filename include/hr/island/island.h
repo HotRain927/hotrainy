@@ -280,6 +280,20 @@ private:
     int dragPageStart_ = -1;    // 拖动时当前页的起始下标（把页内下标换算成全局下标）
     DWORD animLastTick_ = 0;    // 上一帧时刻，用来算 dt（时间驱动，跟帧率解耦）
     void stepCellAnim();        // 每帧推进一次缓动
+
+    // ── 「从任务栏岛台图标位置长出来」的展开动画 ──
+    //
+    // 用户："可不可以让岛台面板有种从任务栏岛台图标的那个位置出来的感觉，
+    //         我们切出来岛台面板的时候会点击一下那个岛台图标，
+    //         你就按照这个鼠标点击的位置去做就好了。"
+    //
+    // 点击位置由 toggleIslandPanel(RECT btn) -> show(anchorX, anchorY) 传进来。
+    // 展开时窗口矩形从"图标附近的小矩形"动画到最终矩形，整帧同时淡入；
+    // UpdateLayeredWindow 会把位图拉伸到 dst 尺寸，于是天然就有缩放长出的效果。
+    bool growActive_ = false;
+    DWORD growStart_ = 0;
+    RECT growFrom_ = {};        // 起始窗口矩形（在图标那一带）
+    RECT growTo_ = {};          // 目标窗口矩形（内容 + 四周外阴影留白）
     // 第 origIdx 项在"松手后的最终布局"里应该落在哪个格子（返回左上角，网格坐标）
     void dragFinalPos(int origIdx, float& tx, float& ty) const;
 

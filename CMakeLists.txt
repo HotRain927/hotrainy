@@ -220,10 +220,6 @@ set_target_properties(GlassTAP PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/build"
 )
 
-# ── 5. com_check.exe（COM 类工厂验证）────────────────────────────────
-# 用 CMake 编译而不是单独 cl：需要与 DLL 相同的宏环境
-# （UNICODE / _WIN32_WINNT 等），否则 interfaces.h 里的
-# MIDL_INTERFACE 展开会失败。
 
 # ── 6. 单元测试（回归安全网，不打进发布包）──
 add_subdirectory(tests)

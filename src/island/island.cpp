@@ -89,7 +89,11 @@ const UINT_PTR kDragTimerId = 0x71;
 // 手机桌面拖动时，被挤开的图标大约用 200ms 滑到位 ——
 // 太短（<120ms）显得生硬像瞬移，太长（>300ms）会觉得拖泥带水、
 // 跟手性变差。200ms 配 easeOutCubic 是接近 iOS/Android 主屏的手感。
-const int kDragAnimTauMs = 65;   // 让位缓动的指数时间常数（约 3τ 收敛，够快又不生硬）
+const int kDragAnimTauMs = 65;
+
+// 展开动画用的定时器（15ms ≈ 60fps）与时长
+const UINT_PTR kGrowTimerId = 0x73;
+const int kGrowMs = 190;   // 让位缓动的指数时间常数（约 3τ 收敛，够快又不生硬）
 
 // 分类「全部」的保留 id
 const char* kAllCategory = "__all__";
@@ -188,9 +192,12 @@ void IslandWindow::show(int anchorX, int anchorY) {
     dragCell_ = -1;
     dragTarget_ = -1;
     pressedCell_ = -1;
+    // 展开动画：如果正播着，取消掉（别让它继续改窗口位置）
+    growActive_ = false;
     if (hwnd_) {
         ::KillTimer(hwnd_, kDragTimerId);
         ::KillTimer(hwnd_, kDragAnimTimerId);
+        ::KillTimer(hwnd_, kGrowTimerId);
     }
     if (!hwnd_ || !cfg_) return;
 
@@ -240,6 +247,26 @@ void IslandWindow::show(int anchorX, int anchorY) {
         if (y_ + h_ > work.bottom) y_ = work.bottom - h_;
         if (x_ < work.left) x_ = work.left;
         if (y_ < work.top) y_ = work.top;
+    }
+
+    // ★ 「从图标位置长出来」：先记下最终窗口矩形，再把起始矩形放在图标那一带。
+    //   动画本身在 redraw 的提交处做（那里才知道 ULW 的 dst/size 该怎么插值）。
+    {
+        const int s0 = shadowInset();
+        growTo_ = {x_ - s0, y_ - s0, x_ + w_ + s0, y_ + h_ + s0};
+        const int gw = std::max(px(72), (int)((growTo_.right - growTo_.left) * 2 / 5));
+        const int gh = std::max(px(72), (int)((growTo_.bottom - growTo_.top) * 2 / 5));
+        growFrom_.left = anchorX - gw / 2;
+        growFrom_.top = anchorY - gh / 2;
+        growFrom_.right = growFrom_.left + gw;
+        growFrom_.bottom = growFrom_.top + gh;
+        growActive_ = true;
+        growStart_ = ::GetTickCount();
+        if (!hwnd_) {
+            growActive_ = false;
+        } else {
+            ::SetTimer(hwnd_, kGrowTimerId, 15, nullptr);
+        }
     }
 
     buildCategories();
@@ -1481,6 +1508,28 @@ void IslandWindow::redraw() {
         SIZE size = {outer_.width(), outer_.height()};
         BLENDFUNCTION blend = {AC_SRC_OVER, 0, 255, AC_SRC_ALPHA};
         POINT dst = {x_ - s, y_ - s};
+
+        // ★ 「从图标位置长出来」：窗口矩形从 growFrom_ 插值到 growTo_，同时淡入。
+        //   位图不用重做 —— UpdateLayeredWindow 会把它拉伸到 dst 尺寸，
+        //   缩放效果是白送的。t 到 1 就收工（顺手杀掉定时器）。
+        if (growActive_) {
+            const DWORD el = ::GetTickCount() - growStart_;
+            double t = (double)el / (double)kGrowMs;
+            if (t >= 1.0) {
+                t = 1.0;
+                growActive_ = false;
+                ::KillTimer(hwnd_, kGrowTimerId);
+            }
+            const double e = 1.0 - std::pow(1.0 - t, 3.0);   // easeOutCubic：起步快、收尾稳
+            auto lerp = [](int a, int b, double k) {
+                return (int)std::lround((double)a + ((double)b - (double)a) * k);
+            };
+            dst.x = lerp(growFrom_.left, growTo_.left, e);
+            dst.y = lerp(growFrom_.top, growTo_.top, e);
+            size.cx = lerp(growFrom_.right - growFrom_.left, growTo_.right - growTo_.left, e);
+            size.cy = lerp(growFrom_.bottom - growFrom_.top, growTo_.bottom - growTo_.top, e);
+            blend.SourceConstantAlpha = (BYTE)std::lround(50.0 + 205.0 * e);   // 顺带淡入
+        }
         // ★ 全局面板透明度：滑块 0-100 作用在这一帧的整体 alpha 上
         // ★ 不再按「面板透明度」缩放整帧 alpha：滑块现在只把**背景**加雾（见 glass.cpp buildFlatPanel），否则连文字/图标/边框一起变透明。
         UpdateLayeredWindow(hwnd_, screen, &dst, &size, mem, &src, 0, &blend, ULW_ALPHA);
@@ -1969,6 +2018,15 @@ layoutSearchEdit();     // 搜索框位置跟上就行
         }
 
         case WM_TIMER: {
+            // 展开动画：每帧重画，进度由 redraw 的提交处按时间算
+            if (w == kGrowTimerId) {
+                if (!growActive_) {
+                    ::KillTimer(h, kGrowTimerId);
+                    return 0;
+                }
+                redraw();
+                return 0;
+            }
             // ── 长按检测 ──
             //
             // ⚠ 必须在定时器里做，不能只在 WM_MOUSEMOVE ——

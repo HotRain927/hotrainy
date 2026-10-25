@@ -726,7 +726,6 @@ void pollIslandButton() {
     }
 }
 bool g_dark = true;
-bool g_menuOpen = false;
 bool g_searchHotkeyOk = false;
 HWND g_dialogSeen = nullptr;       // 当前看到的文件对话框 hwnd
 HWND g_dialogDismissed = nullptr;  // 用户手动关掉过的那个，别再弹
@@ -1114,7 +1113,6 @@ int main() {
     // 菜单打开期间不许自动收起面板
     setContextMenuOpenCallback([](bool open) {
         g_bar.setMenuOpen(open);
-        g_menuOpen = open;
         if (open && g_panel.visible()) g_bar.setPanelOpen(true);
     });
     setDialogDark(g_dark);
