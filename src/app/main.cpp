@@ -26,6 +26,7 @@
 #include "hr/text/theme.h"
 #include "hr/app/app_context.h"
 #include "hr/settings/settings_wire.h"
+#include "hr/search/search_wire.h"
 
 using namespace hr;
 
@@ -1481,7 +1482,7 @@ int main() {
     g_panel.setDark(g_cfg.taskbarTextColor == L"light");   // 跟随「文字颜色」设置
     g_panel.setFontSize(g_cfg.shortcutFontSize);
     if (!g_search.create(GetModuleHandleW(nullptr), &g_cfg, g_dark)) return 1;
-    g_search.onAutoClosed = [](HWND hwnd) { g_dialogDismissed = hwnd; };
+    searchWire();   // 搜索模块的接线（已搬到 src/search/search_wire.cpp）
     // ★ 音频条初次使用：按当前屏幕算一个合适大小并写进配置，
     //   之后用户就在这个基础上加减（不再有"0 = 自动"这种夹死减号的状态）。
     if (g_cfg.audioBarW <= 0) g_cfg.audioBarW = std::max((int)(GetSystemMetrics(SM_CXSCREEN) / 6), 120);   // ★ 横向初始值调大：屏宽 / 6
@@ -1747,5 +1748,6 @@ IslandButton&   islandBtn()  { return g_islandBtn; }
 SearchWindow&   search()     { return g_search; }
 SettingsWindow& settings()   { return g_settings; }
 HWND            msgWnd()     { return g_msgWnd; }
+HWND&           dialogDismissed() { return g_dialogDismissed; }
 bool            applySettingKey(const std::string& key) { return ::applySetting(key); }
 }  // namespace hr

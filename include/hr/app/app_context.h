@@ -29,6 +29,7 @@ IslandButton&  islandBtn();   // 任务栏上的岛台按钮
 SearchWindow&  search();      // 搜索窗
 SettingsWindow& settings();   // 设置窗
 HWND           msgWnd();      // 主消息窗
+HWND&          dialogDismissed();  // 搜索窗自动收起时要关掉的那个对话框句柄
 
 // 设置项生效入口（main.cpp 内部 applySetting 的外部包装，故意不同名以免重载歧义）
 bool applySettingKey(const std::string& key);
