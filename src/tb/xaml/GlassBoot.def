@@ -1,0 +1,21 @@
+; GlassBoot.def — 纯 C 引导层的导出表
+;
+; DllGetClassObject
+;   系统建立 XAML 诊断通道后，通过它索取 TAPSite。
+;   本层转发给 GlassTAP.dll（C++/WinRT 功能层）。
+;
+; GlassBoot_HookProc
+;   ⚠ 这个导出是关键，不是可有可无的。
+;   注入方用 SetWindowsHookEx 时，钩子过程必须来自本 DLL。
+;   如果钩子过程在注入方 EXE 里，Windows 无法把它投递进 explorer，
+;   只会把本 DLL 短暂映射一下就卸载 —— 工作线程来不及运行，
+;   GlassTAP.dll 也就永远加载不了。
+;   （实测现象：boot.log 停在 "thread started"，之后什么都没有。）
+;
+; GlassBoot_Shutdown
+;   注入方释放钩子前的清理入口。
+
+EXPORTS
+    DllGetClassObject       PRIVATE
+    GlassBoot_HookProc      PRIVATE
+    GlassBoot_Shutdown      PRIVATE

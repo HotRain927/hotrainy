@@ -1,0 +1,1802 @@
+// hr/search.cpp — 玻璃搜索窗 + 本地索引
+// 逐块对照 ui/search_window.py 与 core/search_service.py
+#include "hr/search.h"
+
+#include <dwmapi.h>
+#include <shellapi.h>
+#include <shlobj.h>
+#include <shlwapi.h>
+#include <windowsx.h>
+
+#include <algorithm>
+#include <atomic>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <ctime>
+#include <cwctype>
+#include <mutex>
+#include <string>
+#include <thread>
+#include <unordered_set>
+#include <vector>
+
+#include "hr/common.h"
+#include "hr/glass.h"
+#include "hr/icons.h"
+#include "hr/theme.h"
+
+namespace hr {
+namespace {
+
+const wchar_t* kClass = L"HotrainySearch";
+bool g_classReady = false;
+SearchWindow* g_self = nullptr;   // 输入框子类过程要用
+
+const wchar_t* kUI = L"Microsoft YaHei";
+const wchar_t* kSym = L"Segoe UI Symbol";
+
+const int kDesignW = 560;
+const int kDesignH = 420;
+const int kMinW = 380;
+const int kMinH = 220;
+const int kRadius = 14;
+const int kMaxHits = 800;
+
+// ── 索引 ────────────────────────────────────────
+
+const int kMaxEntries = 50000;
+const double kScanBudget = 8.0;
+
+struct Entry {
+    std::wstring nameLower;
+    std::wstring name;
+    std::wstring path;
+    std::wstring parent;
+    int kind = 2;   // 0 目录 / 1 程序 / 2 文件
+};
+
+std::vector<Entry> g_entries;
+std::mutex g_mtx;
+std::atomic<bool> g_scanning{false};
+std::atomic<bool> g_stop{false};
+std::atomic<bool> g_ready{false};
+std::atomic<long long> g_lastScanEnd{0};
+std::thread g_thread;
+std::string g_scope = "user";
+std::vector<std::wstring> g_extraDirs;
+HWND g_notifyWnd = nullptr;
+const UINT WM_INDEX_READY = WM_APP + 21;
+
+std::wstring lowerW(std::wstring s) {
+    for (auto& c : s) c = (wchar_t)towlower(c);
+    return s;
+}
+
+bool endsWith(const std::wstring& s, const wchar_t* suffix) {
+    size_t n = wcslen(suffix);
+    if (s.size() < n) return false;
+    return lowerW(s.substr(s.size() - n)) == suffix;
+}
+
+bool hiddenName(const std::wstring& n) {
+    if (n.empty()) return false;
+    if (n[0] == L'.') return true;
+    return n.size() > 1 && n[0] == L'~' && n[1] == L'$';
+}
+
+const wchar_t* kSkipDirs[] = {
+    L"node_modules", L".git", L".svn", L".idea", L".vscode", L"__pycache__", L"appdata",
+    L"windows", L"winsxs", L"system32", L"syswow64", L"programdata", L"$recycle.bin",
+    L"system volume information", L"temp", L"tmp", L"site-packages", L"dist-info", L"cache",
+    L"caches", L".cache", L"venv", L".venv", L"env", L"bin", L"obj", L"debug", L"release"};
+
+bool skipDir(const std::wstring& low) {
+    for (const wchar_t* s : kSkipDirs) {
+        if (low == s) return true;
+    }
+    return false;
+}
+
+bool isAppExt(const std::wstring& name) {
+    static const wchar_t* exts[] = {L".exe", L".lnk", L".bat", L".cmd", L".url", L".msc"};
+    for (const wchar_t* e : exts) {
+        if (endsWith(name, e)) return true;
+    }
+    return false;
+}
+
+std::wstring envOf(const wchar_t* name) {
+    wchar_t buf[MAX_PATH * 2] = {};
+    DWORD n = GetEnvironmentVariableW(name, buf, MAX_PATH * 2);
+    return n ? std::wstring(buf, n) : std::wstring();
+}
+
+bool isDirPath(const std::wstring& p) {
+    DWORD a = GetFileAttributesW(p.c_str());
+    return a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_DIRECTORY);
+}
+
+std::vector<std::wstring> fixedDrives() {
+    std::vector<std::wstring> out;
+    wchar_t buf[256] = {};
+    DWORD n = GetLogicalDriveStringsW(256, buf);
+    for (DWORD i = 0; i < n;) {
+        std::wstring s(buf + i);
+        i += (DWORD)s.size() + 1;
+        if (s.empty()) continue;
+        if (GetDriveTypeW(s.c_str()) == DRIVE_FIXED) out.push_back(s);
+    }
+    return out;
+}
+
+int maxDepth() {
+    if (g_scope == "all") return 4;
+    if (g_scope == "user") return 6;
+    return 6;
+}
+
+std::vector<std::pair<std::wstring, bool>> roots() {
+    std::vector<std::pair<std::wstring, bool>> out;
+    std::wstring home = envOf(L"USERPROFILE");
+    std::wstring prog = envOf(L"ProgramData");
+    std::wstring appdata = envOf(L"APPDATA");
+
+    // 开始菜单：这里的 .lnk 就是「能启动的程序」
+    for (const std::wstring& p : {prog + L"\\Microsoft\\Windows\\Start Menu\\Programs",
+                                  appdata + L"\\Microsoft\\Windows\\Start Menu\\Programs"}) {
+        if (!p.empty() && isDirPath(p)) out.push_back({p, true});
+    }
+
+    if (g_scope == "all") {
+        for (const auto& d : fixedDrives()) out.push_back({d, false});
+    } else if (g_scope == "user") {
+        if (!home.empty() && isDirPath(home)) out.push_back({home, false});
+    } else {
+        std::wstring pub = envOf(L"PUBLIC");
+        for (const std::wstring& p : {home + L"\\Desktop", pub + L"\\Desktop"}) {
+            if (!p.empty() && isDirPath(p)) out.push_back({p, false});
+        }
+        for (const wchar_t* sub : {L"\\Documents", L"\\Downloads", L"\\Pictures", L"\\Videos"}) {
+            std::wstring p = home + sub;
+            if (!home.empty() && isDirPath(p)) out.push_back({p, false});
+        }
+    }
+
+    for (const auto& p : g_extraDirs) {
+        if (!p.empty() && isDirPath(p)) out.push_back({p, false});
+    }
+
+    // 去重
+    std::unordered_set<std::wstring> seen;
+    std::vector<std::pair<std::wstring, bool>> uniq;
+    for (const auto& r : out) {
+        std::wstring k = lowerW(r.first);
+        while (k.size() > 1 && k.back() == L'\\') k.pop_back();
+        if (seen.insert(k).second) uniq.push_back(r);
+    }
+    // 整盘范围下用户目录已被 C:\ 覆盖
+    if (g_scope == "all") {
+        std::vector<std::pair<std::wstring, bool>> kept;
+        for (const auto& r : uniq) {
+            std::wstring k = lowerW(r.first);
+            while (k.size() > 1 && k.back() == L'\\') k.pop_back();
+            bool inside = false;
+            for (const auto& q : uniq) {
+                if (q.first == r.first) continue;
+                std::wstring qk = lowerW(q.first);
+                while (qk.size() > 1 && qk.back() == L'\\') qk.pop_back();
+                if (k.size() > qk.size() && k.compare(0, qk.size(), qk) == 0) {
+                    inside = true;
+                    break;
+                }
+            }
+            if (!inside) kept.push_back(r);
+        }
+        uniq = kept;
+    }
+    return uniq;
+}
+
+std::wstring displayNameOf(const std::wstring& path) {
+    SHFILEINFOW info = {};
+    if (SHGetFileInfoW(path.c_str(), 0, &info, sizeof(info), SHGFI_DISPLAYNAME))
+        return info.szDisplayName;
+    return L"";
+}
+
+void addEntry(std::vector<Entry>& out, const std::wstring& name, const std::wstring& path,
+              const std::wstring& parent, int kind) {
+    Entry e;
+    e.nameLower = lowerW(name);
+    e.name = name;
+    e.path = path;
+    e.parent = parent;
+    e.kind = kind;
+    out.push_back(std::move(e));
+}
+
+void addRootEntry(std::vector<Entry>& out, const std::wstring& root) {
+    std::wstring p = root;
+    while (p.size() > 1 && p.back() == L'\\') p.pop_back();
+    size_t pos = p.find_last_of(L'\\');
+    std::wstring name = pos == std::wstring::npos ? p : p.substr(pos + 1);
+    std::wstring parent = pos == std::wstring::npos ? L"" : p.substr(0, pos);
+    if (name.empty()) {
+        // 磁盘根：用「本地磁盘 (C:)」
+        wchar_t unit[4] = {p.empty() ? L'C' : p[0], L':', 0, 0};
+        name = std::wstring(L"本地磁盘 (") + unit + L")";
+    }
+    addEntry(out, name, p, parent, 0);
+}
+
+void walk(const std::wstring& rootIn, bool linksOnly, std::vector<Entry>& out, uint64_t t0,
+          int depthMax) {
+    // 根目录可能是「D:」加一个尾反斜杠，直接拼会得到 D: 后面两个反斜杠，
+    // 既让界面显示难看，也让 SHCreateItemFromParsingName 找不到文件 -> 图标提取失败
+    std::wstring root = rootIn;
+    while (root.size() > 1 && root.back() == L'\\') root.pop_back();
+    std::vector<std::pair<std::wstring, int>> stack{{root, 0}};
+    while (!stack.empty()) {
+        if (g_stop.load() || (int)out.size() >= kMaxEntries) return;
+        if ((double)(GetTickCount64() - t0) / 1000.0 > kScanBudget) return;
+
+        auto cur = stack.back();
+        stack.pop_back();
+
+        std::wstring pattern = cur.first + L"\\*";
+        WIN32_FIND_DATAW fd = {};
+        HANDLE hf = FindFirstFileExW(pattern.c_str(), FindExInfoBasic, &fd, FindExSearchNameMatch,
+                                     nullptr, FIND_FIRST_EX_LARGE_FETCH);
+        if (hf == INVALID_HANDLE_VALUE) continue;
+        do {
+            std::wstring name = fd.cFileName;
+            if (name == L"." || name == L"..") continue;
+            if (hiddenName(name)) continue;
+            bool isDir = (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+            std::wstring full = cur.first + L"\\" + name;
+            if (isDir) {
+                std::wstring low = lowerW(name);
+                if (skipDir(low)) continue;
+                addEntry(out, name, full, cur.first, 0);
+                if (cur.second < depthMax) stack.push_back({full, cur.second + 1});
+            } else {
+                if (linksOnly) {
+                    if (!endsWith(name, L".lnk") && !endsWith(name, L".url")) continue;
+                    addEntry(out, name, full, cur.first, 1);
+                } else {
+                    addEntry(out, name, full, cur.first, isAppExt(name) ? 1 : 2);
+                }
+            }
+            if ((int)out.size() >= kMaxEntries) break;
+        } while (FindNextFileW(hf, &fd));
+        FindClose(hf);
+    }
+}
+
+std::wstring cachePath() { return configDir() + L"\\search_index_cpp.txt"; }
+
+void saveCache() {
+    std::string out;
+    out.reserve(g_entries.size() * 80);
+    out += "v1\n";
+    out += std::to_string((long long)time(nullptr)) + "\n";
+    std::lock_guard<std::mutex> lk(g_mtx);
+    for (const auto& e : g_entries) {
+        out += std::to_string(e.kind);
+        out += '\t';
+        out += toUtf8(e.name);
+        out += '\t';
+        out += toUtf8(e.path);
+        out += '\t';
+        out += toUtf8(e.parent);
+        out += '\n';
+    }
+    writeFileAtomic(cachePath(), out);
+}
+
+bool loadCache() {
+    std::string data;
+    if (!readFileUtf8(cachePath(), data)) return false;
+    std::vector<Entry> loaded;
+    size_t pos = 0;
+    int line = 0;
+    while (pos < data.size()) {
+        size_t nl = data.find('\n', pos);
+        std::string row = data.substr(pos, nl == std::string::npos ? std::string::npos : nl - pos);
+        pos = (nl == std::string::npos) ? data.size() : nl + 1;
+        ++line;
+        if (line == 1) {
+            if (row != "v1") return false;
+            continue;
+        }
+        if (line == 2) continue;
+        if (row.empty()) continue;
+        std::vector<std::string> f;
+        size_t p = 0;
+        while (true) {
+            size_t t = row.find('\t', p);
+            f.push_back(row.substr(p, t == std::string::npos ? std::string::npos : t - p));
+            if (t == std::string::npos) break;
+            p = t + 1;
+        }
+        if (f.size() < 4) continue;
+        Entry e;
+        e.kind = std::atoi(f[0].c_str());
+        e.name = toWide(f[1]);
+        e.path = toWide(f[2]);
+        e.parent = toWide(f[3]);
+        e.nameLower = lowerW(e.name);
+        loaded.push_back(std::move(e));
+    }
+    if (loaded.empty()) return false;
+    {
+        std::lock_guard<std::mutex> lk(g_mtx);
+        g_entries = std::move(loaded);
+    }
+    g_ready = true;
+    g_lastScanEnd = (long long)time(nullptr);
+    logf("search: 缓存命中 %d 条", (int)g_entries.size());
+    return true;
+}
+
+void scanJob() {
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+    std::vector<Entry> out;
+    uint64_t t0 = GetTickCount64();
+    int depth = maxDepth();
+
+    for (const auto& r : roots()) {
+        if (g_stop.load()) break;
+        addRootEntry(out, r.first);
+        walk(r.first, r.second, out, t0, depth);
+        if ((int)out.size() >= kMaxEntries) break;
+    }
+
+    // 中文系统里的显示名别名（下载 / 图片 / 音乐 …）
+    if (!g_stop.load()) {
+        std::wstring home = envOf(L"USERPROFILE");
+        std::vector<std::wstring> cands;
+        if (!home.empty()) cands.push_back(home);
+        for (const wchar_t* sub : {L"Desktop", L"Documents", L"Downloads", L"Pictures", L"Music",
+                                   L"Videos", L"Favorites"}) {
+            std::wstring p = home + L"\\" + sub;
+            if (isDirPath(p)) cands.push_back(p);
+        }
+        for (const auto& d : g_extraDirs) cands.push_back(d);
+
+        std::unordered_set<std::wstring> seen;
+        for (const auto& p : cands) {
+            if (p.empty() || !isDirPath(p)) continue;
+            std::wstring k = lowerW(p);
+            if (!seen.insert(k).second) continue;
+            std::wstring disp = displayNameOf(p);
+            std::wstring trim = p;
+            while (trim.size() > 1 && trim.back() == L'\\') trim.pop_back();
+            size_t pos = trim.find_last_of(L'\\');
+            std::wstring base = pos == std::wstring::npos ? trim : trim.substr(pos + 1);
+            if (!disp.empty() && lowerW(disp) != lowerW(base)) {
+                addEntry(out, disp, trim, pos == std::wstring::npos ? L"" : trim.substr(0, pos), 0);
+            }
+        }
+    }
+
+    // 去重 + 截断（同名同路径只留一条）
+    std::unordered_set<std::wstring> seen;
+    std::vector<Entry> uniq;
+    uniq.reserve(out.size());
+    for (auto& e : out) {
+        std::wstring key = e.nameLower + L"\x01" + lowerW(e.path);
+        if (!seen.insert(key).second) continue;
+        uniq.push_back(std::move(e));
+        if ((int)uniq.size() >= kMaxEntries) break;
+    }
+
+    {
+        std::lock_guard<std::mutex> lk(g_mtx);
+        g_entries = std::move(uniq);
+    }
+    g_lastScanEnd = (long long)time(nullptr);
+    g_ready = true;
+    logf("search: 建索引完成 %d 条", (int)g_entries.size());
+    saveCache();
+    if (g_notifyWnd) PostMessageW(g_notifyWnd, WM_INDEX_READY, 0, 0);
+}
+
+void refreshIndex(HWND notify) {
+    g_notifyWnd = notify;
+    if (g_scanning.exchange(true)) return;
+    g_stop = false;
+    if (g_thread.joinable()) g_thread.join();
+    g_thread = std::thread([] {
+        scanJob();
+        g_scanning = false;
+    });
+}
+
+void stopIndex() {
+    g_stop = true;
+    if (g_thread.joinable()) g_thread.join();
+    g_scanning = false;
+}
+
+// ── 打分（对照 search_service.py 的 _score / _initials / _subseq） ──
+
+std::wstring initialsOf(const std::wstring& name) {
+    std::wstring out;
+    bool prevSep = true, prevLower = false;
+    const std::wstring seps = L" _-.()[]{}·,，、";
+    for (wchar_t ch : name) {
+        if (seps.find(ch) != std::wstring::npos) {
+            prevSep = true;
+            prevLower = false;
+            continue;
+        }
+        if (prevSep || (iswupper(ch) && prevLower)) out.push_back((wchar_t)towlower(ch));
+        prevSep = false;
+        prevLower = iswlower(ch) || iswdigit(ch);
+    }
+    return out;
+}
+
+bool isSubseq(const std::wstring& q, const std::wstring& s) {
+    size_t pos = 0;
+    for (wchar_t ch : q) {
+        size_t j = s.find(ch, pos);
+        if (j == std::wstring::npos) return false;
+        pos = j + 1;
+    }
+    return true;
+}
+
+int scoreOf(const std::wstring& nameLower, const std::wstring& q, const std::wstring& name,
+            bool fuzzy) {
+    if (nameLower == q) return 1000;
+    if (nameLower.compare(0, q.size(), q) == 0 && nameLower.size() >= q.size()) {
+        return 900 - (int)std::min<size_t>(nameLower.size() - q.size(), 60);
+    }
+    size_t i = nameLower.find(q);
+    if (i != std::wstring::npos) {
+        return 700 - (int)i * 5 - (int)std::min<size_t>(nameLower.size() / 3, 40);
+    }
+    if (!name.empty()) {
+        std::wstring ini = initialsOf(name);
+        if (ini.size() >= 2 && isSubseq(q, ini)) {
+            return std::max(300, 560 - (int)(ini.size() - q.size()) * 10);
+        }
+    }
+    if (!fuzzy) return 0;
+    size_t pos = 0;
+    int first = -1, gaps = 0;
+    for (wchar_t ch : q) {
+        size_t j = nameLower.find(ch, pos);
+        if (j == std::wstring::npos) return 0;
+        if (first < 0) first = (int)j;
+        gaps += (int)j - (int)pos;
+        pos = j + 1;
+    }
+    if (gaps > (int)q.size() * 2 + 3) return 0;
+    if ((int)pos - first > (int)q.size() * 1.5 + 3) return 0;
+    return std::max(120, 480 - gaps * 6 - (int)std::min<size_t>(nameLower.size() / 4, 60));
+}
+
+int cmpLogical(const std::wstring& a, const std::wstring& b) {
+    int r = StrCmpLogicalW(a.c_str(), b.c_str());
+    return r;
+}
+
+int kindRank(int kind) {
+    if (kind == 0) return 0;
+    if (kind == 1) return 1;
+    return 2;
+}
+
+// ── 文件对话框检测（对照 search_window.py 的 _is_file_dialog / file_dialog_bounds /
+//    _dialog_edit / fill_file_dialog） ──
+
+bool hasChildClass(HWND hwnd, const wchar_t* clsName) {
+    struct Ctx {
+        const wchar_t* name;
+        bool* found;
+    } ctx{clsName, nullptr};
+    bool found = false;
+    ctx.found = &found;
+    EnumChildWindows(
+        hwnd,
+        [](HWND h, LPARAM lp) -> BOOL {
+            Ctx* c = (Ctx*)lp;
+            wchar_t cls[64] = {};
+            GetClassNameW(h, cls, 64);
+            if (_wcsicmp(cls, c->name) == 0) {
+                *c->found = true;
+                return FALSE;
+            }
+            return TRUE;
+        },
+        (LPARAM)&ctx);
+    return found;
+}
+
+bool dialogVisibleRect(HWND hwnd, RECT& out) {
+    if (!IsWindow(hwnd) || IsIconic(hwnd) || !IsWindowVisible(hwnd)) return false;
+    RECT r = {};
+    if (FAILED(DwmGetWindowAttribute(hwnd, DWMWA_EXTENDED_FRAME_BOUNDS, &r, sizeof(r)))) {
+        if (!GetWindowRect(hwnd, &r)) return false;
+    }
+    if (r.right - r.left < 200 || r.bottom - r.top < 120) return false;
+    out = r;
+    return true;
+}
+
+bool isFileDialog(HWND hwnd) {
+    wchar_t cls[64] = {};
+    GetClassNameW(hwnd, cls, 64);
+    if (wcscmp(cls, L"#32770") != 0) return false;
+    if (!IsWindowVisible(hwnd)) return false;
+    RECT r;
+    if (!dialogVisibleRect(hwnd, r)) return false;
+    if (hasChildClass(hwnd, L"SHELLDLL_DefView")) return true;
+    return hasChildClass(hwnd, L"DirectUIHWND") && hasChildClass(hwnd, L"Edit");
+}
+
+HWND dialogEdit(HWND hwnd) {
+    if (!hwnd) return nullptr;
+    struct Ctx {
+        std::vector<HWND> edits;
+    } ctx;
+    EnumChildWindows(
+        hwnd,
+        [](HWND h, LPARAM lp) -> BOOL {
+            Ctx* c = (Ctx*)lp;
+            wchar_t cls[32] = {};
+            GetClassNameW(h, cls, 32);
+            if (_wcsicmp(cls, L"Edit") == 0 && IsWindowVisible(h)) c->edits.push_back(h);
+            return TRUE;
+        },
+        (LPARAM)&ctx);
+    if (ctx.edits.empty()) return nullptr;
+    HWND best = nullptr;
+    int bestScore = -1;
+    for (HWND e : ctx.edits) {
+        int s = 0;
+        HWND p = e;
+        for (int i = 0; i < 6; ++i) {
+            p = GetParent(p);
+            if (!p) break;
+            wchar_t cls[32] = {};
+            GetClassNameW(p, cls, 32);
+            if (_wcsicmp(cls, L"ComboBoxEx32") == 0) {
+                s = 10;
+                break;
+            }
+        }
+        if (s > bestScore) {
+            bestScore = s;
+            best = e;
+        }
+    }
+    return best;
+}
+
+bool fillFileDialog(HWND hwnd, const std::wstring& path) {
+    if (!hwnd || path.empty()) return false;
+    HWND edit = dialogEdit(hwnd);
+    if (!edit) return false;
+    SendMessageW(edit, WM_SETTEXT, 0, (LPARAM)path.c_str());
+    PostMessageW(hwnd, WM_COMMAND, MAKEWPARAM(1, 0), 0);  // IDOK = 1
+    return true;
+}
+
+}  // namespace
+
+// ── 共用查询：把关键词跑一遍索引，返回排好序的命中项 ────────────────
+//
+// ⚠ 这段是从 SearchWindow::runSearch 里**原样抽出来**的，不是重写的。
+//
+//   为什么要抽：岛台面板现在要在**自己面板里**直接显示结果列表
+//   （用户要求"把搜索框复制一份固定在岛台上"），而搜索窗也要显示结果。
+//   两边必须共用同一套匹配与排序 —— 否则同一个词在岛台和搜索窗里
+//   结果顺序不一样，用户会以为其中一个坏了。
+//
+//   纯函数：不碰搜索窗的任何成员状态，也不动索引（只读 g_entries）。
+std::vector<SearchHit> runQuery(const std::wstring& q, int maxHits) {
+    std::vector<SearchHit> out;
+    if (q.empty()) return out;
+
+    std::wstring ql = lowerW(q);
+    bool pathMode = (q.find(L'\\') != std::wstring::npos || q.find(L'/') != std::wstring::npos);
+    std::wstring qn = pathMode ? ql : L"";
+    if (pathMode) {
+        for (auto& c : qn) {
+            if (c == L'/') c = L'\\';
+        }
+    }
+    bool extMode = ql.size() > 1 && ql[0] == L'.';
+    bool fuzzy = ql.size() >= 3 && !extMode;
+
+    struct Scored {
+        int s;
+        // ⚠⚠ 这里必须存**值**，不能存指向 g_entries 的指针。
+        //
+        //   踩过的坑（代码审计发现，属必崩点）：
+        //     原来写的是 `const Entry* e;`，指向 g_entries 里的元素。
+        //     而下面的锁**在 1183 行就释放了**，
+        //     之后 1192-1215 还要拿这些指针去排序比较、取字段。
+        //     与此同时后台扫描线程 scanJob 会整体替换 g_entries ——
+        //     一旦撞上，就是 use-after-free，直接崩。
+        //
+        //     存值只多拷几个字符串（命中数上限是 maxHits，很小），
+        //     换来的是彻底不依赖锁的生命周期。
+        std::wstring nameLower;
+        std::wstring name;
+        std::wstring path;
+        std::wstring parent;
+        int kind;
+    };
+    std::vector<Scored> scored;
+    {
+        std::lock_guard<std::mutex> lk(g_mtx);
+        scored.reserve(g_entries.size() / 8 + 16);
+        for (const auto& e : g_entries) {
+            int s = 0;
+            if (extMode) {
+                s = endsWith(e.nameLower, ql.c_str()) ? 640 : 0;
+            } else {
+                s = scoreOf(e.nameLower, ql, e.name, fuzzy);
+            }
+            if (pathMode) {
+                std::wstring hay = lowerW(e.parent + L"\\" + e.name);
+                size_t i = hay.find(qn);
+                if (i != std::wstring::npos) {
+                    std::wstring a = hay, b = qn;
+                    while (!a.empty() && a.back() == L'\\') a.pop_back();
+                    while (!b.empty() && b.back() == L'\\') b.pop_back();
+                    if (a == b) {
+                        s = 990;
+                    } else {
+                        s = std::max(s, 560 - (int)std::min<size_t>(i, 80));
+                    }
+                }
+            }
+            if (s > 0) scored.push_back({s, e.nameLower, e.name, e.path, e.parent, e.kind});
+        }
+    }
+    if (scored.empty()) return out;
+
+    std::sort(scored.begin(), scored.end(), [](const Scored& a, const Scored& b) {
+        if (a.s != b.s) return a.s > b.s;
+        return a.nameLower < b.nameLower;
+    });
+    if ((int)scored.size() > maxHits) scored.resize(maxHits);
+
+    std::sort(scored.begin(), scored.end(), [](const Scored& a, const Scored& b) {
+        int r = cmpLogical(a.name, b.name);
+        if (r) return r < 0;
+        int ka = kindRank(a.kind), kb = kindRank(b.kind);
+        if (ka != kb) return ka < kb;
+        return cmpLogical(a.path, b.path) < 0;
+    });
+
+    out.clear();
+    out.reserve(scored.size());
+    for (const auto& s : scored) {
+        SearchHit h;
+        h.name = s.name;
+        h.path = s.path;
+        h.parent = s.parent;
+        h.kind = s.kind;
+        out.push_back(std::move(h));
+    }
+
+    if (!pathMode && !extMode) {
+        std::stable_sort(out.begin(), out.end(), [&ql](const SearchHit& a, const SearchHit& b) {
+            std::wstring al = lowerW(a.name), bl = lowerW(b.name);
+            bool ap = al.compare(0, ql.size(), ql) == 0 && al.size() >= ql.size();
+            bool bp = bl.compare(0, ql.size(), ql) == 0 && bl.size() >= ql.size();
+            return ap && !bp;
+        });
+    }
+
+
+    return out;
+}
+
+
+bool fileDialogBounds(RECT& out, HWND& hwnd) {
+    HWND fg = GetForegroundWindow();
+    if (fg && isFileDialog(fg)) {
+        if (dialogVisibleRect(fg, out)) {
+            hwnd = fg;
+            return true;
+        }
+    }
+    // 不只看前台：用户点过搜索框后前台就变了，但对话框还开着，按 z 序找最上面那个
+    HWND h = GetTopWindow(nullptr);
+    int guard = 0;
+    while (h && guard < 2000) {
+        guard++;
+        if (h != fg && isFileDialog(h)) {
+            if (dialogVisibleRect(h, out)) {
+                hwnd = h;
+                return true;
+            }
+        }
+        h = GetWindow(h, GW_HWNDNEXT);
+    }
+    return false;
+}
+
+// ── 窗口实现 ────────────────────────────────────
+
+bool SearchWindow::create(HINSTANCE hInst, Config* cfg, bool dark) {
+    hinst_ = hInst;
+    cfg_ = cfg;
+    dark_ = dark;
+
+    if (!g_classReady) {
+        WNDCLASSEXW wc = {};
+        wc.cbSize = sizeof(wc);
+        wc.lpfnWndProc = SearchWindow::proc;
+        wc.hInstance = hInst;
+        wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+        wc.lpszClassName = kClass;
+        wc.style = CS_DBLCLKS;
+        RegisterClassExW(&wc);
+        g_classReady = true;
+    }
+
+    if (hwnd_) return true;
+
+    customSize_ = cfg_->searchSizeCustom;
+    posCustom_ = cfg_->searchPosCustom && cfg_->searchX >= 0 && cfg_->searchY >= 0;
+    w_ = px(std::max<double>(kMinW, cfg_->searchW));
+    h_ = px(std::max<double>(kMinH, cfg_->searchH));
+
+    hwnd_ = CreateWindowExW(WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TOPMOST, kClass, L"搜索",
+                            WS_POPUP, 0, 0, w_, h_, nullptr, nullptr, hInst, this);
+    if (!hwnd_) {
+        logf("search: 创建窗口失败 %lu", (unsigned long)GetLastError());
+        return false;
+    }
+    g_self = this;
+
+    // 输入框必须是「独立弹窗」而不是 WS_CHILD：
+    // 主窗用 UpdateLayeredWindow 上屏，而这种窗口不会渲染子控件（文字整块消失，
+    // 但键盘照样能输入，特别容易看漏）。做成 owner 为主窗的 popup 就正常了。
+    edit_ = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST, L"EDIT", L"",
+                            WS_POPUP | ES_AUTOHSCROLL | ES_LEFT, 0, 0, 10, 10, hwnd_, nullptr,
+                            hInst, nullptr);
+    if (edit_) {
+        HFONT f = CreateFontW(-pt(12), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+                              OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                              DEFAULT_PITCH, kUI);
+        SendMessageW(edit_, WM_SETFONT, (WPARAM)f, TRUE);
+        editOldProc_ = (WNDPROC)SetWindowLongPtrW(edit_, GWLP_WNDPROC, (LONG_PTR)searchEditProc);
+    }
+
+    // 索引：先读缓存（秒开），再后台重建
+    g_scope = cfg_->searchScope;
+    g_extraDirs = cfg_->searchDirs;
+    loadCache();
+    refreshIndex(hwnd_);
+    return true;
+}
+
+void SearchWindow::destroy() {
+    stopIndex();
+    if (hwnd_) DestroyWindow(hwnd_);
+    g_self = nullptr;
+}
+
+void SearchWindow::reloadIndex() {
+    if (!cfg_) return;
+    g_scope = cfg_->searchScope;
+    g_extraDirs = cfg_->searchDirs;
+    g_ready = false;
+    refreshIndex(hwnd_);
+}
+
+bool SearchWindow::indexReady() const { return g_ready.load(); }
+int SearchWindow::indexCount() const { return (int)g_entries.size(); }
+
+// ── 位置 / 尺寸 ─────────────────────────────────
+
+void SearchWindow::fitBelow(int t, int b, int sh, int& y, int& h) const {
+    int gap = px(6), margin = px(8), minH = px(kMinH);
+    int availBelow = sh - margin - (b + gap);
+    if (availBelow >= minH) {
+        y = b + gap;
+        h = std::min(h_, availBelow);
+        return;
+    }
+    int availAbove = t - gap - margin;
+    if (availAbove >= minH) {
+        h = std::min(h_, availAbove);
+        y = t - gap - h;
+        return;
+    }
+    h = std::max(minH, std::min(h_, sh - margin * 2));
+    y = std::max(0, sh - h - margin);
+}
+
+bool SearchWindow::targetBounds(RECT& out, HWND& hwnd, bool& isDialog) const {
+    HWND fg = GetForegroundWindow();
+    if (fg && fg != hwnd_) {
+        wchar_t cls[64] = {};
+        GetClassNameW(fg, cls, 64);
+        bool explorer =
+            (wcscmp(cls, L"CabinetWClass") == 0 || wcscmp(cls, L"ExploreWClass") == 0);
+        if (explorer) {
+            RECT rc = {};
+            if (GetWindowRect(fg, &rc)) {
+                RECT ext = {};
+                if (SUCCEEDED(DwmGetWindowAttribute(fg, DWMWA_EXTENDED_FRAME_BOUNDS, &ext,
+                                                     sizeof(ext)))) {
+                    rc = ext;
+                }
+                if (rc.right - rc.left >= px(200) && rc.bottom - rc.top >= px(100)) {
+                    out = rc;
+                    hwnd = fg;
+                    isDialog = false;
+                    return true;
+                }
+            }
+        }
+    }
+    // 文件对话框：前台或按 z 序（对照 target_bounds -> file_dialog_bounds）
+    RECT rc = {};
+    HWND dlg = nullptr;
+    if (fileDialogBounds(rc, dlg)) {
+        out = rc;
+        hwnd = dlg;
+        isDialog = true;
+        return true;
+    }
+    return false;
+}
+
+void SearchWindow::place(bool autoOnly) {
+    RECT work = {};
+    SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0);
+    int sw = work.right - work.left;
+    int sh = work.bottom - work.top;
+
+    // 用户手动挪过 → 就摆在他放的地方
+    if (posCustom_ && !autoOnly) {
+        w_ = std::max(px(kMinW), std::min(w_, sw));
+        h_ = std::max(px(kMinH), std::min(h_, sh));
+        x_ = work.left + std::max(0, std::min(px(cfg_->searchX), sw - w_));
+        y_ = work.top + std::max(0, std::min(px(cfg_->searchY), sh - h_));
+        attached_ = nullptr;
+        return;
+    }
+
+    RECT tb = {};
+    HWND th = nullptr;
+    bool isDialog = false;
+    if (cfg_ && cfg_->searchFollow && targetBounds(tb, th, isDialog)) {
+        int l = tb.left, t = tb.top, r = tb.right, b = tb.bottom;
+        int w = customSize_ ? std::max(px(kMinW), std::min(w_, sw)) : std::max(px(kMinW), r - l);
+        int ny = 0, nh = 0;
+        fitBelow(t - work.top, b - work.top, sh, ny, nh);
+        w_ = w;
+        h_ = nh;
+        x_ = l;
+        y_ = work.top + ny;
+        if (x_ + w_ > work.right) x_ = std::max(work.left, work.right - w_);
+        attached_ = th;
+        attachedDialog_ = isDialog;
+        return;
+    }
+
+    w_ = std::max(px(kMinW), std::min(w_, sw));
+    h_ = std::max(px(kMinH), std::min(h_, sh));
+    x_ = work.left + std::max(0, (sw - w_) / 2);
+    y_ = work.top + std::max(0, (int)(sh * 0.18));
+    attached_ = nullptr;
+    attachedDialog_ = false;
+}
+
+// ── 玻璃 ────────────────────────────────────────
+
+void SearchWindow::buildGlass() {
+    glass_.create(w_, h_);
+    int r = px(kRadius);
+    Backdrop bd;
+    RECT rc = {x_, y_, x_ + w_, y_ + h_};
+    if (!Surface::capture(rc, 0, bd)) {
+        hasGlass_ = false;
+        avg_ = dark_ ? rgb(26, 27, 31) : rgb(242, 243, 245);
+        glass_.fillRect(0, 0, w_, h_, avg_);
+        return;
+    }
+    hasGlass_ = true;
+    glass_.buildCard(bd, dark_, r, 22, dark_ ? 58 : 46);
+    avg_ = glass_.average();
+    glass_.addBorder(r, dark_);
+    glass_.cutRoundCorners(r);
+}
+
+void SearchWindow::rebuildGlassOffscreen() {
+    if (!hasGlass_ || !hwnd_) return;
+    SetWindowPos(hwnd_, nullptr, -20000, -20000, w_, h_,
+                 SWP_NOREDRAW | SWP_NOACTIVATE | SWP_NOZORDER);
+    Sleep(16);
+    buildGlass();
+    redraw();
+    SetWindowPos(hwnd_, nullptr, x_, y_, w_, h_, SWP_NOACTIVATE | SWP_NOZORDER);
+}
+
+void SearchWindow::pushFrame() {
+    HDC screen = GetDC(nullptr);
+    if (!screen) return;
+    HBITMAP bmp = frame_.createPremultipliedBitmap(screen);
+    if (bmp) {
+        HDC mem = CreateCompatibleDC(screen);
+        HGDIOBJ old = SelectObject(mem, bmp);
+        POINT dst = {x_, y_};
+        SIZE sz = {w_, h_};
+        POINT src = {0, 0};
+        BLENDFUNCTION bf = {AC_SRC_OVER, 0, 255, AC_SRC_ALPHA};
+        UpdateLayeredWindow(hwnd_, screen, &dst, &sz, mem, &src, 0, &bf, ULW_ALPHA);
+        SelectObject(mem, old);
+        DeleteDC(mem);
+        DeleteObject(bmp);
+    }
+    ReleaseDC(nullptr, screen);
+}
+
+uint32_t SearchWindow::bandAvg(int y1, int y2) const {
+    if (glass_.width() <= 0 || glass_.height() <= 0) return avg_;
+    const auto& pxv = glass_.pixels();
+    int H = glass_.height(), W = glass_.width();
+    y1 = std::max(0, std::min(H - 1, y1));
+    y2 = std::max(y1, std::min(H - 1, y2));
+    uint64_t r = 0, g = 0, b = 0;
+    int n = 0;
+    for (int y = y1; y <= y2; y += 2) {
+        for (int x = 0; x < W; x += 7) {
+            uint32_t c = pxv[(size_t)y * W + x];
+            r += rOf(c);
+            g += gOf(c);
+            b += bOf(c);
+            ++n;
+        }
+    }
+    if (!n) return avg_;
+    return rgb((uint8_t)(r / n), (uint8_t)(g / n), (uint8_t)(b / n));
+}
+
+uint32_t SearchWindow::tint(int y1, int y2, double amount, bool towardWhite) const {
+    if (!dark_) {
+        towardWhite = false;
+        amount *= 0.45;
+    }
+    uint32_t base = bandAvg(y1, y2);
+    return blendColor(base, towardWhite ? 0xFFFFFFFFu : 0xFF000000u, amount) | 0xFF000000u;
+}
+
+// ── 绘制 ────────────────────────────────────────
+
+void SearchWindow::drawHeader() {
+    uint32_t text = 0, dim = 0;
+    readableText(avg_, dark_, text, dim);
+    double lum = (0.2126 * rOf(avg_) + 0.7152 * gOf(avg_) + 0.0722 * bOf(avg_)) / 255.0;
+    if (lum >= 0.28 && lum <= 0.62) dim = (lum < 0.45) ? rgb(216, 218, 224) : rgb(51, 53, 58);
+
+    uint32_t hair = (blendColor(avg_, dark_ ? 0xFFFFFFFFu : 0xFF000000u, dark_ ? 0.16 : 0.12)) |
+                    0xFF000000u;
+    uint32_t pill = (blendColor(avg_, dark_ ? 0xFFFFFFFFu : 0xFF000000u, dark_ ? 0.10 : 0.05)) |
+                    0xFF000000u;
+
+    // 放大镜：圆圈 + 手柄（也是拖动手柄）
+    int cx = px(26), cy = px(24), r = px(7);
+    bool dragHot = (GetAsyncKeyState(VK_LBUTTON) == 0);
+    uint32_t col = dim;
+    if (dark_) col = (GetCapture() == hwnd_) ? text : dim;
+    else col = (GetCapture() == hwnd_) ? text : dim;
+    (void)dragHot;
+    frame_.strokeCircle(cx, cy, r, col, (float)std::max(1, px(1.4)));
+    frame_.drawLine(cx + (int)(r * 0.7), cy + (int)(r * 0.7), cx + (int)(r * 1.9),
+                    cy + (int)(r * 1.9), col, (float)std::max(1, px(1.6)));
+
+    // 输入区凹槽
+    frame_.fillRoundRect(px(44), px(9), w_ - px(12) - px(44), px(39) - px(9), px(9), pill);
+
+    frame_.fillRect(px(12), px(48), w_ - px(24), 1, hair);
+}
+
+void SearchWindow::drawShapeIcon(const SearchHit& hit, int x, int y, int size, uint32_t tile) {
+    int half = size / 2;
+    uint32_t text = 0, dim = 0;
+    readableText(avg_, dark_, text, dim);
+    if (hit.kind == 0) {
+        uint32_t tab = blendColor(tile, 0xFFFFFFFFu, 0.22) | 0xFF000000u;
+        frame_.fillRoundRect(x, y - half - px(2), (int)(size * 0.52), px(7) + px(2), px(2), tab);
+        frame_.fillRoundRect(x, y - half + px(3), size, size - px(3), px(3), tile);
+    } else {
+        frame_.fillRoundRect(x, y - half, size, size, px(4), tile);
+        std::wstring ch = hit.name.empty() ? L"?" : hit.name.substr(0, 1);
+        for (auto& c : ch) c = (wchar_t)towupper(c);
+        RECT rc = {x, y - half, x + size, y + half};
+        frame_.drawText(ch.c_str(), rc, (float)pt(10), text, 1, false, kSym);
+    }
+}
+
+void SearchWindow::drawResults() {
+    uint32_t text = 0, dim = 0;
+    readableText(avg_, dark_, text, dim);
+    double lum = (0.2126 * rOf(avg_) + 0.7152 * gOf(avg_) + 0.0722 * bOf(avg_)) / 255.0;
+    if (lum >= 0.28 && lum <= 0.62) dim = (lum < 0.45) ? rgb(216, 218, 224) : rgb(51, 53, 58);
+    uint32_t accent = dark_ ? rgb(138, 180, 255) : rgb(47, 107, 216);
+
+    top_ = px(52);
+    rowH_ = px(46);
+    int avail = h_ - top_ - px(32);
+    int rows = std::max(1, avail / rowH_);
+    rowsVis_ = rows;
+
+    int n = (int)hits_.size();
+    int maxScroll = std::max(0, n - rows);
+    scroll_ = std::max(0, std::min(scroll_, maxScroll));
+
+    if (hits_.empty()) {
+        std::wstring msg = hint_;
+        if (msg.empty()) msg = query_.empty() ? L"输入关键字搜索应用和文件" : L"没有匹配的结果";
+        RECT rc = {0, top_ + avail / 2 - px(10), w_, top_ + avail / 2 + px(10)};
+        frame_.drawText(msg.c_str(), rc, (float)pt(8), dim, 1, false, kUI);
+        return;
+    }
+
+    int start = scroll_;
+    int end = std::min(n, start + rows);
+    for (int i = 0; i < end - start; ++i) {
+        int idx = start + i;
+        const SearchHit& hit = hits_[(size_t)idx];
+        int y1 = top_ + i * rowH_;
+        int y2 = y1 + rowH_;
+        bool sel = (idx == sel_);
+        if (sel) {
+            frame_.fillRoundRect(px(8), y1 + px(2), w_ - px(16), rowH_ - px(4), px(8),
+                                 tint(y1, y2, 0.20, true));
+            frame_.fillRoundRect(px(8), y1 + px(13), px(3), rowH_ - px(26), px(1), accent);
+        } else if (idx == hotRow_) {
+            frame_.fillRoundRect(px(8), y1 + px(2), w_ - px(16), rowH_ - px(4), px(8),
+                                 tint(y1, y2, 0.12, true));
+        }
+
+        int isz = px(20);
+        int ix = px(18);
+        int iy = (y1 + y2) / 2;
+        HBITMAP bmp = iconFor(hit.path, isz);
+        if (bmp) {
+            frame_.drawBitmap(bmp, ix, iy - isz / 2, isz);
+        } else {
+            drawShapeIcon(hit, ix, iy, isz, tint(y1, y2, 0.32, true));
+        }
+
+        int tx = ix + isz + px(11);
+        int right = w_ - px(14) - (n > rows ? px(10) : 0);
+
+        std::wstring name = Surface::fitText(hit.name.c_str(), (float)pt(11), right - tx, kUI);
+        int hh = px(9);
+        RECT rn = {tx, iy - px(9) - hh, right, iy - px(9) + hh};
+        frame_.drawText(name.c_str(), rn, (float)pt(11), text, 0, false, kUI);
+
+        std::wstring parent = hit.parent;
+        if (parent.size() > 58) {
+            std::wstring tail = parent.substr(parent.size() - 56);
+            size_t cut = tail.find(L'\\');
+            if (cut != std::wstring::npos && cut < 14) tail = tail.substr(cut);
+            parent = L"…" + tail;
+        }
+        std::wstring pathText =
+            Surface::fitText(parent.c_str(), (float)pt(8), right - tx, kUI);
+        RECT rp = {tx, iy + px(10) - hh, right, iy + px(10) + hh};
+        frame_.drawText(pathText.c_str(), rp, (float)pt(8), dim, 0, false, kUI);
+    }
+
+    if (n > rows) drawScrollbar(top_, avail, rows, n);
+}
+
+void SearchWindow::drawScrollbar(int top, int avail, int rows, int n) {
+    int x1 = w_ - px(16);
+    int x2 = w_ - px(11);
+    int y0 = top + px(6);
+    int y1 = top + avail - px(6);
+    int trackH = std::max(px(10), y1 - y0);
+    int barH = std::max(px(28), (int)((double)trackH * rows / std::max(1, n)));
+    if (barH > trackH) barH = trackH;
+    int travel = trackH - barH;
+    int maxScroll = std::max(1, n - rows);
+    int off = (int)((double)travel * scroll_ / maxScroll);
+
+    uint32_t hair = (blendColor(avg_, dark_ ? 0xFFFFFFFFu : 0xFF000000u, dark_ ? 0.16 : 0.12)) |
+                    0xFF000000u;
+    uint32_t accent = dark_ ? rgb(138, 180, 255) : rgb(47, 107, 216);
+    frame_.fillRoundRect(x1, y0, x2 - x1, trackH, px(2), hair);
+    frame_.fillRoundRect(x1, y0 + off, x2 - x1, barH, px(2), accent);
+
+    sbTrack_ = trackH;
+    sbThumb_ = barH;
+    sbTravel_ = travel;
+    sbMaxScroll_ = maxScroll;
+}
+
+void SearchWindow::drawFooter() {
+    uint32_t dim = 0, text = 0;
+    readableText(avg_, dark_, text, dim);
+    double lum = (0.2126 * rOf(avg_) + 0.7152 * gOf(avg_) + 0.0722 * bOf(avg_)) / 255.0;
+    if (lum >= 0.28 && lum <= 0.62) dim = (lum < 0.45) ? rgb(216, 218, 224) : rgb(51, 53, 58);
+    uint32_t hair = (blendColor(avg_, dark_ ? 0xFFFFFFFFu : 0xFF000000u, dark_ ? 0.16 : 0.12)) |
+                    0xFF000000u;
+
+    int fy = h_ - px(30);
+    frame_.fillRect(px(12), fy, w_ - px(24), 1, hair);
+
+    int y = h_ - px(15);
+    std::wstring hint = L"↑↓ 选择   Enter 打开   Ctrl+Enter 所在位置   Esc 关闭";
+    if ((int)hits_.size() > rowsVis_)
+        hint = L"↑↓ 选择   Enter 打开   Ctrl+Enter 所在位置   滚轮翻页   Esc 关闭";
+    int avail = w_ - px(28) - (hits_.empty() ? 0 : px(76));
+    std::wstring fitted = Surface::fitText(hint.c_str(), (float)pt(8), avail, kUI);
+    int hh = px(8);
+    RECT rc = {px(14), y - hh, px(14) + avail, y + hh};
+    frame_.drawText(fitted.c_str(), rc, (float)pt(8), dim, 0, false, kUI);
+
+    if (!hits_.empty()) {
+        std::wstring txt = std::to_wstring(sel_ + 1) + L" / " + std::to_wstring(hits_.size());
+        RECT r2 = {w_ - px(14) - px(80), y - hh, w_ - px(14), y + hh};
+        frame_.drawText(txt.c_str(), r2, (float)pt(8), dim, 2, false, kUI);
+    }
+}
+
+void SearchWindow::redraw() {
+    if (!hwnd_) return;
+    if (frame_.width() != w_ || frame_.height() != h_) frame_.create(w_, h_);
+    if (!solidOnly_ && glass_.width() == w_ && glass_.height() == h_) {
+        frame_ = glass_;
+    } else {
+        // 拖动/缩放中或玻璃底尺寸还没更新：先铺实色，松手后再重建
+        frame_.fillRect(0, 0, w_, h_, avg_ | 0xFF000000u);
+        frame_.cutRoundCorners(px(kRadius));
+    }
+    if (editBrush_) {
+        DeleteObject(editBrush_);
+        editBrush_ = nullptr;
+    }
+
+    drawHeader();
+    drawResults();
+    drawFooter();
+    pushFrame();
+}
+
+// ── 交互 ────────────────────────────────────────
+
+void SearchWindow::layoutEntry() {
+    if (!edit_) return;
+    int ex = px(48), ey = px(11);
+    int ew = std::max(px(80), w_ - ex - px(14));
+    int eh = px(26);
+    // 输入框是独立窗口了，坐标要用屏幕坐标
+    SetWindowPos(edit_, HWND_TOPMOST, x_ + ex, y_ + ey, ew, eh,
+                 SWP_NOACTIVATE | (visible_ ? SWP_SHOWWINDOW : 0));
+    syncEntryColors();
+}
+
+void SearchWindow::syncEntryColors() {
+    if (!edit_) return;
+    if (editBrush_) {
+        DeleteObject(editBrush_);
+        editBrush_ = nullptr;
+    }
+    InvalidateRect(edit_, nullptr, TRUE);
+}
+
+int SearchWindow::rowAt(int y) const {
+    if (y < top_) return -1;
+    int i = (y - top_) / std::max(1, rowH_);
+    int idx = scroll_ + i;
+    if (idx < 0 || idx >= (int)hits_.size()) return -1;
+    return idx;
+}
+
+const wchar_t* SearchWindow::zoneAt(int x, int y) const {
+    int b = px(6);
+    if (x < 0 || y < 0 || x > w_ || y > h_) return nullptr;
+    bool left = x <= b, right = x >= w_ - b, top = y <= b, bottom = y >= h_ - b;
+    if (top && left) return L"nw";
+    if (top && right) return L"ne";
+    if (bottom && left) return L"sw";
+    if (bottom && right) return L"se";
+    if (left) return L"w";
+    if (right) return L"e";
+    if (top) return L"n";
+    if (bottom) return L"s";
+    return nullptr;
+}
+
+//
+// 做法是把词写进输入框再走一遍正常的 runSearch ——
+// 这样搜索行为、结果排序、提示文本与用户手打完全一致，
+// 不会出现"岛台搜出来的和手打搜出来的不一样"。
+void SearchWindow::runSearch() {
+    if (!edit_) return;
+    wchar_t buf[512] = {};
+    GetWindowTextW(edit_, buf, 512);
+    std::wstring q = buf;
+    while (!q.empty() && (q.front() == L' ' || q.front() == L'\t')) q.erase(q.begin());
+    while (!q.empty() && (q.back() == L' ' || q.back() == L'\t')) q.pop_back();
+    query_ = q;
+    scroll_ = 0;
+    hotRow_ = -1;
+
+    // 匹配/排序全交给共用函数（见文件上方 runQuery 的说明）
+    hits_ = runQuery(q, maxHits_);
+
+    sel_ = 0;
+    hint_ = hits_.empty()
+                ? (q.empty() ? std::wstring()
+                             : (g_ready ? std::wstring(L"没有匹配的结果")
+                                        : std::wstring(L"索引还没建好…")))
+                : std::wstring();
+    redraw();
+}
+
+// 给岛台面板用：查一次关键词拿回结果，**不改动搜索窗自己的状态**。
+std::vector<SearchHit> queryHits(const std::wstring& q, int maxHits) {
+    if (maxHits <= 0) maxHits = 200;
+    return runQuery(q, maxHits);
+}
+
+void SearchWindow::moveSel(int delta) {
+    if (hits_.empty()) return;
+    sel_ = std::max(0, std::min((int)hits_.size() - 1, sel_ + delta));
+    ensureVisible();
+    redraw();
+}
+
+void SearchWindow::pageSel(int dir) {
+    if (hits_.empty()) return;
+    int step = std::max(1, rowsVis_ - 1) * (dir > 0 ? 1 : -1);
+    sel_ = std::max(0, std::min((int)hits_.size() - 1, sel_ + step));
+    ensureVisible();
+    redraw();
+}
+
+void SearchWindow::ensureVisible() {
+    int rows = std::max(1, rowsVis_);
+    if (sel_ < scroll_) {
+        scroll_ = sel_;
+    } else if (sel_ >= scroll_ + rows) {
+        scroll_ = sel_ - rows + 1;
+    }
+}
+
+void SearchWindow::clampSelToView() {
+    if (hits_.empty()) return;
+    int rows = std::max(1, rowsVis_);
+    if (sel_ < scroll_) {
+        sel_ = scroll_;
+    } else if (sel_ >= scroll_ + rows) {
+        sel_ = std::min((int)hits_.size() - 1, scroll_ + rows - 1);
+    }
+}
+
+void SearchWindow::scrollBy(int rows) {
+    if (hits_.empty()) return;
+    int maxScroll = std::max(0, (int)hits_.size() - std::max(1, rowsVis_));
+    int next = std::max(0, std::min(maxScroll, scroll_ + rows));
+    if (next != scroll_) {
+        scroll_ = next;
+        clampSelToView();
+        redraw();
+    }
+}
+
+void SearchWindow::openSelected() {
+    if (hits_.empty()) return;
+    open(hits_[(size_t)sel_]);
+}
+
+void SearchWindow::revealSelected() {
+    if (hits_.empty()) return;
+    reveal(hits_[(size_t)sel_]);
+}
+
+void SearchWindow::open(const SearchHit& hit) {
+    bool filled = false;
+    if (attached_ && attachedDialog_) {
+        // 贴文件对话框时：把路径填进文件名框并确认（对照 fill_file_dialog）
+        filled = fillFileDialog(attached_, hit.path);
+    }
+    logf("search: 选中 %s  attached=%p dialog=%d filled=%d", toUtf8(hit.name).c_str(),
+         (void*)attached_, (int)attachedDialog_, (int)filled);
+    if (!filled) {
+        ::AllowSetForegroundWindow(ASFW_ANY);   // ★ 允许新进程把窗口带到前台
+        ShellExecuteW(nullptr, L"open", hit.path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+    }
+    hide();
+}
+
+void SearchWindow::reveal(const SearchHit& hit) {
+    std::wstring sel = L"/select,\"" + hit.path + L"\"";
+    ::AllowSetForegroundWindow(ASFW_ANY);   // ★ 允许新进程把窗口带到前台
+    ShellExecuteW(nullptr, L"open", L"explorer.exe", sel.c_str(), nullptr, SW_SHOWNORMAL);
+    hide();
+}
+
+void SearchWindow::sbPress(int y) {
+    sbDragging_ = true;
+    sbStartY_ = y;
+    sbStartScroll_ = scroll_;
+}
+
+void SearchWindow::sbDrag(int yRoot) {
+    if (!sbDragging_ || sbTravel_ <= 0) return;
+    int dy = yRoot - sbStartY_;
+    int next = sbStartScroll_ + (int)((double)dy / sbTravel_ * sbMaxScroll_ + 0.5);
+    next = std::max(0, std::min(sbMaxScroll_, next));
+    if (next != scroll_) {
+        scroll_ = next;
+        clampSelToView();
+        redraw();
+    }
+}
+
+// ── 显示 / 隐藏 ─────────────────────────────────
+
+void SearchWindow::show(bool activate) {
+    if (!hwnd_) return;
+    visible_ = true;
+    hits_.clear();
+    sel_ = 0;
+    scroll_ = 0;
+    hotRow_ = -1;
+    query_.clear();
+    hint_.clear();
+    solidOnly_ = false;
+    if (edit_) {
+        SetWindowTextW(edit_, L"");
+        ShowWindow(edit_, SW_HIDE);   // 等主窗摆好再露出来，避免闪一下孤零零的输入框
+    }
+
+    place(!activate);
+    SetWindowPos(hwnd_, HWND_TOPMOST, x_, y_, w_, h_, SWP_NOACTIVATE);
+    buildGlass();
+    redraw();
+    ShowWindow(hwnd_, SW_SHOW);
+    SetWindowPos(hwnd_, HWND_TOPMOST, x_, y_, w_, h_, SWP_NOACTIVATE);
+    layoutEntry();
+    if (activate) {
+        // 后台进程直接 SetForegroundWindow 会被系统拒绝（前台锁定），
+        // 结果就是窗口刚显示、焦点还在别人身上 -> 140ms 后被自己的失焦逻辑收起。
+        // 走 AttachThreadInput 借用前台线程的输入状态才稳。
+        HWND fg = GetForegroundWindow();
+        DWORD t1 = fg ? GetWindowThreadProcessId(fg, nullptr) : 0;
+        DWORD t2 = GetCurrentThreadId();
+        bool attached = (t1 && t1 != t2 && AttachThreadInput(t1, t2, TRUE));
+        SetForegroundWindow(hwnd_);
+        BringWindowToTop(hwnd_);
+        if (edit_) SetFocus(edit_);
+        if (attached) AttachThreadInput(t1, t2, FALSE);
+        logf("search: 前台请求 fg=%p -> hwnd=%p now=%p", (void*)fg, (void*)hwnd_,
+             (void*)GetForegroundWindow());
+    } else {
+        autoMode_ = true;
+    }
+    SetTimer(hwnd_, 4, 200, nullptr);
+    logf("search: 显示 %dx%d @(%d,%d) 索引 %d 条%s", w_, h_, x_, y_, indexCount(),
+         g_ready ? "" : "（还没建好）");
+}
+
+void SearchWindow::hide() {
+    if (!hwnd_) return;
+    KillTimer(hwnd_, 4);
+    visible_ = false;              // 先清，免得 layoutEntry 又把输入框显示出来
+    if (edit_) ShowWindow(edit_, SW_HIDE);
+    ShowWindow(hwnd_, SW_HIDE);
+    // 自动弹出后被用户关掉：告诉主程序别再为同一个对话框弹回来
+    if (autoMode_ && attached_ && onAutoClosed) onAutoClosed(attached_);
+    attached_ = nullptr;
+    attachedDialog_ = false;
+    autoMode_ = false;
+    logf("search: 收起");
+}
+
+void SearchWindow::toggle() {
+    if (visible_) {
+        hide();
+    } else {
+        show(true);
+    }
+}
+
+void SearchWindow::persistSize() {
+    if (!cfg_) return;
+    double s = dpiScale();
+    cfg_->searchW = (int)std::lround(w_ / s);
+    cfg_->searchH = (int)std::lround(h_ / s);
+    cfg_->searchSizeCustom = true;
+    customSize_ = true;
+    saveConfig(*cfg_);
+}
+
+void SearchWindow::persistPos() {
+    if (!cfg_) return;
+    double s = dpiScale();
+    cfg_->searchX = (int)std::lround(x_ / s);
+    cfg_->searchY = (int)std::lround(y_ / s);
+    cfg_->searchPosCustom = true;
+    posCustom_ = true;
+    saveConfig(*cfg_);
+}
+
+void SearchWindow::followTarget() {
+    if (!attached_ || !cfg_ || !cfg_->searchFollow) return;
+    if (dragging_ || resizing_) return;
+    RECT rc = {};
+    RECT ext = {};
+    if (!GetWindowRect(attached_, &rc) ||
+        !IsWindowVisible(attached_)) {
+        hide();
+        return;
+    }
+    if (SUCCEEDED(DwmGetWindowAttribute(attached_, DWMWA_EXTENDED_FRAME_BOUNDS, &ext, sizeof(ext))))
+        rc = ext;
+    RECT work = {};
+    SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0);
+    int ny = 0, nh = 0;
+    fitBelow(rc.top - work.top, rc.bottom - work.top, work.bottom - work.top, ny, nh);
+    int nx = rc.left;
+    int nw = customSize_ ? w_ : std::max(px(kMinW), (int)(rc.right - rc.left));
+    if (abs(nx - x_) > 1 || abs(ny + work.top - y_) > 1 || nh != h_ || nw != w_) {
+        x_ = nx;
+        y_ = work.top + ny;
+        w_ = nw;
+        h_ = nh;
+        SetWindowPos(hwnd_, nullptr, x_, y_, w_, h_, SWP_NOZORDER | SWP_NOACTIVATE);
+        layoutEntry();
+        redraw();
+        rebuildGlassOffscreen();
+    }
+}
+
+void SearchWindow::attachTo(HWND hwnd, bool dialog) {
+    if (!hwnd_ || !visible_) return;
+    attached_ = hwnd;
+    attachedDialog_ = dialog;
+    autoMode_ = true;
+    userDetached_ = false;
+    followTarget();
+    // 新对话框刚拿到前台，可能把宿主窗口顶到我们头上，补一下置顶
+    SetWindowPos(hwnd_, HWND_TOPMOST, 0, 0, 0, 0,
+                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    logf("search: 改贴对话框 %p", (void*)hwnd);
+}
+
+// ── 窗口过程 ────────────────────────────────────
+
+LRESULT CALLBACK searchEditProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    SearchWindow* self = g_self;
+    if (self) {
+        switch (msg) {
+            case WM_KEYDOWN:
+                switch (wp) {
+                    case VK_DOWN:
+                        self->moveSel(1);
+                        return 0;
+                    case VK_UP:
+                        self->moveSel(-1);
+                        return 0;
+                    case VK_NEXT:
+                        self->pageSel(1);
+                        return 0;
+                    case VK_PRIOR:
+                        self->pageSel(-1);
+                        return 0;
+                    case VK_RETURN:
+                        if (GetKeyState(VK_CONTROL) & 0x8000)
+                            self->revealSelected();
+                        else
+                            self->openSelected();
+                        return 0;
+                    case VK_ESCAPE:
+                        self->hide();
+                        return 0;
+                    case VK_TAB:
+                        return 0;
+                    default:
+                        break;
+                }
+                break;
+            case WM_MOUSEWHEEL: {
+                int d = GET_WHEEL_DELTA_WPARAM(wp);
+                self->scrollBy(d > 0 ? -3 : 3);
+                return 0;
+            }
+            case WM_KILLFOCUS:
+                // 输入框是独立弹窗，焦点一走就说明点了别处；延迟 140ms 再判，
+                // 免得「点结果行 / 重新聚焦输入框」把自己关掉（对照 _on_focus_out）
+                if (self->hwnd_) SetTimer(self->hwnd_, 5, 140, nullptr);
+                break;
+            default:
+                break;
+        }
+    }
+    SearchWindow* s = g_self;
+    WNDPROC oldProc = s ? s->editOldProc_ : nullptr;
+    return CallWindowProcW(oldProc ? oldProc : DefWindowProcW, hwnd, msg, wp, lp);
+}
+
+LRESULT CALLBACK SearchWindow::proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    SearchWindow* self = (SearchWindow*)GetWindowLongPtrW(hwnd, GWLP_USERDATA);
+    if (msg == WM_NCCREATE) {
+        CREATESTRUCTW* cs = (CREATESTRUCTW*)lp;
+        self = (SearchWindow*)cs->lpCreateParams;
+        SetWindowLongPtrW(hwnd, GWLP_USERDATA, (LONG_PTR)self);
+    }
+    if (self) return self->handle(hwnd, msg, wp, lp);
+    return DefWindowProcW(hwnd, msg, wp, lp);
+}
+
+LRESULT SearchWindow::handle(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    switch (msg) {
+        case WM_ERASEBKGND:
+            return 1;
+
+        case WM_CTLCOLOREDIT: {
+            // 输入框底色跟玻璃凹槽一致
+            uint32_t pill =
+                (blendColor(avg_, dark_ ? 0xFFFFFFFFu : 0xFF000000u, dark_ ? 0.10 : 0.05)) |
+                0xFF000000u;
+            uint32_t text = 0, dim = 0;
+            readableText(avg_, dark_, text, dim);
+            HDC dc = (HDC)wp;
+            SetTextColor(dc, RGB(rOf(text), gOf(text), bOf(text)));
+            SetBkColor(dc, RGB(rOf(pill), gOf(pill), bOf(pill)));
+            if (!editBrush_)
+                editBrush_ = CreateSolidBrush(RGB(rOf(pill), gOf(pill), bOf(pill)));
+            return (LRESULT)editBrush_;
+        }
+
+        case WM_COMMAND:
+            if (HIWORD(wp) == EN_CHANGE && (HWND)lp == edit_) {
+                // 45ms 防抖：一边打字一边搜，但不要每个字符都全表扫一遍
+                SetTimer(hwnd, 3, 45, nullptr);
+            }
+            return 0;
+
+        case WM_TIMER:
+            if (wp == 3) {
+                KillTimer(hwnd, 3);
+                runSearch();
+                return 0;
+            }
+            if (wp == 4) {
+                followTarget();
+                return 0;
+            }
+            if (wp == 5) {
+                // 失焦后延迟判断：输入框抢焦点、点结果行都会先来一次失焦
+                KillTimer(hwnd, 5);
+                if (!autoMode_ && !dragging_ && !resizing_) {
+                    // 只要前台还是「本进程」的窗口就别收：输入框是独立 popup，
+                    // 点它 / 点标签栏都会让主窗 WA_INACTIVE，但用户并没有离开搜索。
+                    HWND fg = GetForegroundWindow();
+                    DWORD pid = 0;
+                    if (fg) GetWindowThreadProcessId(fg, &pid);
+                    if (!fg || pid != GetCurrentProcessId()) {
+                        logf("search: 失去焦点 -> 自动收起");
+                        hide();
+                    }
+                }
+                return 0;
+            }
+            return 0;
+
+        case WM_MOUSEMOVE: {
+            int mx = GET_X_LPARAM(lp), my = GET_Y_LPARAM(lp);
+            if (resizing_) {
+                POINT cur = {};
+                GetCursorPos(&cur);
+                int dx = cur.x - rMouse_.x, dy = cur.y - rMouse_.y;
+                if (dx || dy) {
+                    resizeMoved_ = true;
+                    userDetached_ = true;
+                }
+                int minW = px(kMinW), minH = px(kMinH);
+                int nx = rStartX_, ny = rStartY_, nw = rStartW_, nh = rStartH_;
+                std::wstring z = resizeZone_ ? resizeZone_ : L"";
+                if (z.find(L'w') != std::wstring::npos) {
+                    nx = rStartX_ + dx;
+                    nw = rStartW_ - dx;
+                }
+                if (z.find(L'e') != std::wstring::npos) nw = rStartW_ + dx;
+                if (z.find(L'n') != std::wstring::npos) {
+                    ny = rStartY_ + dy;
+                    nh = rStartH_ - dy;
+                }
+                if (z.find(L's') != std::wstring::npos) nh = rStartH_ + dy;
+                if (nw < minW) {
+                    if (z.find(L'w') != std::wstring::npos) nx = rStartX_ + rStartW_ - minW;
+                    nw = minW;
+                }
+                if (nh < minH) {
+                    if (z.find(L'n') != std::wstring::npos) ny = rStartY_ + rStartH_ - minH;
+                    nh = minH;
+                }
+                x_ = nx;
+                y_ = ny;
+                w_ = nw;
+                h_ = nh;
+                SetWindowPos(hwnd, nullptr, x_, y_, w_, h_, SWP_NOZORDER | SWP_NOACTIVATE);
+                layoutEntry();
+                redraw();
+                return 0;
+            }
+            if (dragging_) {
+                POINT cur = {};
+                GetCursorPos(&cur);
+                int nx = cur.x - dragOffset_.x, ny = cur.y - dragOffset_.y;
+                if (nx != x_ || ny != y_) {
+                    dragMoved_ = true;
+                    userDetached_ = true;
+                }
+                x_ = nx;
+                y_ = ny;
+                solidOnly_ = true;
+                SetWindowPos(hwnd, nullptr, x_, y_, 0, 0,
+                             SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+                layoutEntry();
+                redraw();
+                return 0;
+            }
+            if (sbDragging_) {
+                POINT cur = {};
+                GetCursorPos(&cur);
+                sbDrag(cur.y);
+                return 0;
+            }
+            const wchar_t* z = zoneAt(mx, my);
+            if (z) {
+                const wchar_t* cur = L"arrow";
+                if (wcscmp(z, L"nw") == 0 || wcscmp(z, L"se") == 0) cur = IDC_SIZENWSE;
+                else if (wcscmp(z, L"ne") == 0 || wcscmp(z, L"sw") == 0) cur = IDC_SIZENESW;
+                else if (wcscmp(z, L"w") == 0 || wcscmp(z, L"e") == 0) cur = IDC_SIZEWE;
+                else if (wcscmp(z, L"n") == 0 || wcscmp(z, L"s") == 0) cur = IDC_SIZENS;
+                SetCursor(LoadCursorW(nullptr, cur));
+                return 0;
+            }
+            int idx = rowAt(my);
+            if (idx != hotRow_) {
+                hotRow_ = (idx >= 0) ? idx : -1;
+                SetCursor(LoadCursorW(nullptr, idx >= 0 ? IDC_HAND : IDC_ARROW));
+                redraw();
+            }
+            return 0;
+        }
+
+        case WM_LBUTTONDOWN: {
+            int mx = GET_X_LPARAM(lp), my = GET_Y_LPARAM(lp);
+            // 点窗里任何一处都确保自己是前台、输入框有焦点（对照 _on_any_click）
+            HWND fg = GetForegroundWindow();
+            if (fg != hwnd && fg != edit_) SetForegroundWindow(hwnd);
+            if (edit_ && GetFocus() != edit_) SetFocus(edit_);
+            const wchar_t* z = zoneAt(mx, my);
+            if (z) {
+                resizeZone_ = z;
+                resizing_ = true;
+                resizeMoved_ = false;
+                rStartX_ = x_;
+                rStartY_ = y_;
+                rStartW_ = w_;
+                rStartH_ = h_;
+                POINT cur = {};
+                GetCursorPos(&cur);
+                rMouse_ = cur;
+                solidOnly_ = true;
+                SetCapture(hwnd);
+                return 0;
+            }
+            // 滚动条
+            if (mx >= w_ - px(18) && mx <= w_ - px(9) && my >= top_ && my <= h_ - px(32) &&
+                (int)hits_.size() > rowsVis_) {
+                POINT cur = {};
+                GetCursorPos(&cur);
+                sbPress(cur.y);
+                SetCapture(hwnd);
+                return 0;
+            }
+            // 放大镜区域 → 拖窗口
+            if (mx <= px(44) && my <= px(48)) {
+                POINT cur = {};
+                GetCursorPos(&cur);
+                dragOffset_.x = cur.x - x_;
+                dragOffset_.y = cur.y - y_;
+                dragging_ = true;
+                dragMoved_ = false;
+                attached_ = nullptr;
+                attachedDialog_ = false;
+                autoMode_ = false;
+                SetCapture(hwnd);
+                return 0;
+            }
+            int idx = rowAt(my);
+            if (idx >= 0) {
+                sel_ = idx;
+                open(hits_[(size_t)idx]);
+            }
+            return 0;
+        }
+
+        case WM_ACTIVATE:
+            if (LOWORD(wp) == WA_INACTIVE) SetTimer(hwnd, 5, 140, nullptr);
+            return 0;
+
+        case WM_LBUTTONUP: {
+            if (sbDragging_) {
+                sbDragging_ = false;
+                ReleaseCapture();
+                return 0;
+            }
+            bool wasResize = resizing_ && resizeMoved_;
+            bool wasDrag = dragging_ && dragMoved_;
+            bool was = resizing_ || dragging_;
+            resizing_ = false;
+            dragging_ = false;
+            resizeMoved_ = false;
+            dragMoved_ = false;
+            if (was) {
+                ReleaseCapture();
+                solidOnly_ = false;
+                rebuildGlassOffscreen();
+                syncEntryColors();
+                if (wasResize) persistSize();
+                if (wasDrag) {
+                    persistPos();
+                    persistSize();
+                }
+            }
+            return 0;
+        }
+
+        case WM_MOUSEWHEEL: {
+            int d = GET_WHEEL_DELTA_WPARAM(wp);
+            scrollBy(d > 0 ? -3 : 3);
+            return 0;
+        }
+
+        case WM_KEYDOWN:
+            if (wp == VK_ESCAPE) {
+                hide();
+                return 0;
+            }
+            return 0;
+
+        case WM_CLOSE:
+            hide();
+            return 0;
+
+        case WM_DESTROY:
+            KillTimer(hwnd, 3);
+            KillTimer(hwnd, 4);
+            if (editBrush_) {
+                DeleteObject(editBrush_);
+                editBrush_ = nullptr;
+            }
+            hwnd_ = nullptr;
+            return 0;
+
+        default:
+            break;
+    }
+    if (msg == WM_INDEX_READY) {
+        if (!query_.empty()) runSearch();
+        return 0;
+    }
+    return DefWindowProcW(hwnd, msg, wp, lp);
+}
+
+}  // namespace hr

@@ -1,0 +1,16 @@
+; GlassTAP.def — DLL 导出表
+;
+; ⚠ DllGetClassObject 必须导出，否则 InitializeXamlDiagnosticsEx
+;   会返回 0x80070490 (E_NOTFOUND)：系统拿不到我们的类工厂，
+;   无法为 CLSID_GlassTAPSite 创建 TAPSite 对象。
+;
+; 这是踩过的坑：代码写对了但没 .def，链接器默认不导出任何符号。
+;
+; 只导出 DllGetClassObject 一个 —— 对照 TranslucentTB 的 ExplorerTAP.def，
+; 它也只导出这一个。多导出 DllCanUnloadNow 会让系统把它当标准
+; COM 服务器处理，可能改变加载/卸载时机。
+;
+; PRIVATE 关键字：导出但不放进导入库。
+
+EXPORTS
+    DllGetClassObject   PRIVATE

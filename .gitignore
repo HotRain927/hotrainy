@@ -1,0 +1,31 @@
+# ── 构建产物 ──
+build/
+**/build/
+*.obj
+*.o
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.res
+*.exe
+*.dll
+
+# ── 发布包（走 GitHub Releases，不进仓库）──
+*.zip
+dist_v*/
+_sfxtest*/
+_realtest*/
+*.log
+
+# ── 临时/备份 ──
+_backup_*/
+*.tmp
+*~
+
+# ── 编辑器 ──
+.vs/
+.vscode/
+*.user
+*.suo
+.idea/
