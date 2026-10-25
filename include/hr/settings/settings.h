@@ -71,6 +71,11 @@ private:
 
     void createWindow(const std::string& version);
     void buildGlass();
+
+    // ★ 外阴影留白（逻辑像素）——与悬停面板 / 岛台同一套：
+    //   窗口向外扩这么多，内容坐标（winW_/winH_/x_/y_ 与所有布局）**一像素不动**，
+    //   只有"跟系统打交道"的地方减掉它（提交、窗口摆放、鼠标坐标）。
+    int shadowInset() const;
     void rebuildGlassOffscreen();
     void redraw();
     void pushFrame();
@@ -146,8 +151,10 @@ private:
     Config* cfg_ = nullptr;
     std::wstring version_;
 
-    Surface glass_;
-    Surface frame_;
+    Surface glass_;     // 内容大小：玻璃底
+    Surface frame_;     // 内容大小：本帧
+    Surface shadow_;    // 画布大小：只含外圈影子
+    Surface outer_;     // 画布大小：shadow_ + frame_ → 提交给窗口
     uint32_t avg_ = 0xFF1B1C20;
     bool hasGlass_ = false;
     bool dark_ = true;

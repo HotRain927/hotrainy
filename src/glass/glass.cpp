@@ -783,7 +783,7 @@ void Surface::ensureHitTestableEdges() {
 }
 
 // ★ 让整块面板都能收鼠标（见 glass.h 的说明）。
-void Surface::ensureHitTestableArea(const RECT& rc, int radius) {
+void Surface::ensureHitTestableArea(const RECT& rc, int radius, uint8_t floorAlpha) {
     if (w_ <= 0 || h_ <= 0) return;
     int x0 = std::max(0, (int)rc.left), y0 = std::max(0, (int)rc.top);
     int x1 = std::min(w_ - 1, (int)rc.right - 1), y1 = std::min(h_ - 1, (int)rc.bottom - 1);
@@ -793,7 +793,7 @@ void Surface::ensureHitTestableArea(const RECT& rc, int radius) {
         for (int x = x0; x <= x1; ++x) {
             if (cornerCover(x - x0, y - y0, rw, rh, radius) < 0.5) continue;   // 圆角外不动
             uint32_t& c = px_[(size_t)y * w_ + x];
-            if ((c >> 24) == 0) c = 0x01000000u;   // 只抬 alpha，RGB 留 0 → 看不出来
+            if ((c >> 24) == 0) c = (uint32_t)floorAlpha << 24;   // 只抬 alpha，RGB 留 0 → 看不出来
         }
     }
 }

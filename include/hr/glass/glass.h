@@ -29,6 +29,19 @@ struct Backdrop {
     uint32_t average() const;
 };
 
+// 命中用 alpha 下限：按当前「面板透明度」算，保证乘完 SourceConstantAlpha 之后
+// 仍然 >= 1（否则分层窗口的命中测试会把那一片当成全透明，鼠标直接穿透到背后窗口）。
+// 它自己很小 —— 合成到屏幕上约 1/255，肉眼看不出来。
+inline uint8_t hitTestAlphaFor(int opacityPercent) {
+    int p = opacityPercent < 0 ? 0 : (opacityPercent > 100 ? 100 : opacityPercent);
+    int c = 255 * p / 100;              // 就是 SourceConstantAlpha
+    if (c < 1) c = 1;
+    int a = (255 + c - 1) / c;          // ceil(255/c) → 合成后 >= 1
+    if (a < 2) a = 2;
+    if (a > 32) a = 32;                 // 上限：再低也救不回来，而且别真的看得见
+    return (uint8_t)a;
+}
+
 class Surface {
 public:
     bool create(int w, int h);
@@ -121,7 +134,12 @@ public:
     //   实测证据：面板开着时 WindowFromPoint(面板内部) 返回的是背后的浏览器窗口，
     //   只有边框和阴影那几圈（alpha>0）才返回 HotrainyPanel。
     //   抬到 1（1/255 ≈ 0.4% 不透明度）肉眼看不出来，但窗口就开始收鼠标了。
-    void ensureHitTestableArea(const RECT& rc, int radius);
+    //   floorAlpha：抬到的 alpha 下限，默认 1（1/255，看不见）。
+    //   ⚠ 但提交时会按「面板透明度」把整帧 alpha 再乘一遍（SourceConstantAlpha），
+    //     透明度压低时 alpha=1 会被四舍五入成 0 —— 分层窗口立刻又不收鼠标了
+    //     （表现：面板里点一下，点穿到背后的窗口）。所以调用方要用
+    //     hitTestAlphaFor(panelOpacity) 传一个"缩完仍 >= 1"的值。
+    void ensureHitTestableArea(const RECT& rc, int radius, uint8_t floorAlpha = 1);
 
     // 设置玻璃的不透明度（0.0 = 全透，1.0 = 完全不透明）。
     //

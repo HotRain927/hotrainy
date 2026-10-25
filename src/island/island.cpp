@@ -41,6 +41,14 @@ namespace {
 
 const wchar_t* kIslandClass = L"HotrainyIsland";
 
+// ★ 外阴影留白（逻辑像素）。IslandWindow::shadowInset() 和 contentPt() 共用这一个值 ——
+//   两处必须一致，否则鼠标坐标会整体偏掉。
+//   窗口 = 内容 + 四周这么多留白；内容坐标不变，只有跟系统打交道的地方要减掉它。
+constexpr int kIslandShadowLogical = 12;
+inline int islandShadowPx() {
+    return px(kIslandShadowLogical);
+}
+
 // 面板尺寸下限 —— 再小连搜索框和分类栏都排不下
 const int kMinW = 420;
 const int kMinH = 320;
@@ -292,13 +300,17 @@ void IslandWindow::hide() {
     if (visible_) {
         RECT wr{};
         if (::GetWindowRect(hwnd_, &wr)) {
-            const int nw = wr.right - wr.left;
-            const int nh = wr.bottom - wr.top;
-            if (nw > 0 && nh > 0 && (nw != w_ || nh != h_ || wr.left != x_ || wr.top != y_)) {
+            // ★ 窗口矩形 = 内容 + 四周外阴影留白 → 存进配置的必须是**内容**几何，
+            //   否则每次隐藏都按"窗口尺寸"记一遍，下次打开就长大一圈。
+            const int shd = islandShadowPx();
+            const int nw = (wr.right - wr.left) - shd * 2;
+            const int nh = (wr.bottom - wr.top) - shd * 2;
+            const int nxp = wr.left + shd, nyp = wr.top + shd;
+            if (nw > 0 && nh > 0 && (nw != w_ || nh != h_ || nxp != x_ || nyp != y_)) {
                 w_ = nw;
                 h_ = nh;
-                x_ = wr.left;
-                y_ = wr.top;
+                x_ = nxp;
+                y_ = nyp;
                 if (cfg_) {
                     cfg_->islandW = w_;
                     cfg_->islandH = h_;
@@ -418,16 +430,19 @@ void IslandWindow::refreshBackdropWhileDragging() {
     //   所以抓到的是"面板背后"的真实背景，抓完直接当底重烘焙。
     //
     // ⚠ 千万别在这里藏窗口（会中止拖动），也别抓整屏（太重会堵住拖动）。
-    RECT rc = {wr.left, wr.top, wr.right, wr.bottom};
+    // ★ 抓的是**内容**那一块（窗口多出的一圈留白不该算进来，
+    //   否则玻璃底的取样范围会偏出去一圈）。
+    const int shd = islandShadowPx();
+    RECT rc = {wr.left + shd, wr.top + shd, wr.right - shd, wr.bottom - shd};
     Backdrop bd;
     if (Surface::capture(rc, 0, bd, /*includeLayered=*/false)) {
         backdrop_ = bd;
         baseValid_ = false;
     }
 
-    // 记账：拖动中位置一直在变，位置要跟上
-    x_ = wr.left;
-    y_ = wr.top;
+    // 记账：拖动中位置一直在变，位置要跟上（窗口矩形 → 内容位置）
+    x_ = wr.left + shd;
+    y_ = wr.top + shd;
     redraw();
     layoutSearchEdit();     // 输入框也要跟着面板走
 }
@@ -738,7 +753,20 @@ void IslandWindow::rebuildBase() {
     const int op = cfg_ ? cfg_->panelOpacity : 0;
     base_.buildFlatPanel(op, radius, dark_);   // 0 = 纯透明，边框始终保留
     base_.cutRoundCorners(radius);
+
+    // ★ 外阴影：与悬停面板同一套 —— 画布比内容大出四周留白，
+    //   影子只画在内容矩形之外，**内容坐标一像素不动**。
+    const int s = shadowInset();
+    shadow_.create(w_ + s * 2, h_ + s * 2);
+    shadow_.clear();
+    RECT content = {s, s, s + w_, s + h_};
+    shadow_.applyOuterShadow(content, radius, dark_, px(2));
+
     baseValid_ = true;
+}
+
+int IslandWindow::shadowInset() const {
+    return islandShadowPx();
 }
 
 void IslandWindow::drawGridCell(int index, int cx, int cy, int cw, int ch, bool hover) {
@@ -895,11 +923,14 @@ void IslandWindow::layoutSearchEdit() {
     const int sw = w_ - px(24);
     const int sh = searchH_ - px(16);
     const int iconW = px(38);          // 左边留给放大镜（见 redraw 里画的那个字形）
-    const int ex = wr.left + sx + iconW;
+    // ★ + 外阴影留白：窗口外框在"内容左上角"的左上方，正好差这一圈。
+    //   不加的话搜索框会整体偏出留白那么多（视觉上错位一整条）。
+    const int shd = islandShadowPx();
+    const int ex = wr.left + shd + sx + iconW;
     // ⚠ 下移 px(6)（实测：贴着提亮条时文字中心比提亮条中心高约 8.5px，
     //   下移 px(6)=9px 正好居中）。高度同时减 px(12)，
     //   保证整块仍在提亮条内 —— 越出去会露出生硬的直角边。
-    const int ey = wr.top + sy + px(6);
+    const int ey = wr.top + shd + sy + px(6);
     int ew = sw - iconW;
     int eh = sh - px(12);
     if (ew < px(80)) ew = px(80);
@@ -1144,9 +1175,16 @@ void IslandWindow::redraw() {
     const int sw = w_ - px(24);
     const int sh = searchH_ - px(16);
     if (sw > px(80) && sh > px(16)) {
-        // 深色下用白 16% 提亮；浅色下用黑 12% 压暗 —— 两边都能看出"这里是个输入框"
-        const uint32_t boxCol = dark_ ? 0x28FFFFFFu : 0x20000000u;
+        // ★ 输入框的底必须**不透明**：它是那个真 EDIT 窗口自己刷底色的，
+        //   而 EDIT 只能填一个实色 —— 两边同色才零色差（下面 updateSearchBgColor 的用意）。
+        //
+        //   ⚠ 原来画的是半透明白 0x28FFFFFF，而 updateSearchBgColor() 从这一帧取像素时
+        //     只取 RGB、把 alpha 强写成 255 → EDIT 拿到的是**纯白实色**画刷，
+        //     用户看到的就是搜索框那条"非常亮的白底"。改成不透明深色后才真正一致。
+        const uint32_t boxCol = 0xFF1B1D22u;   // 不透明深色：白字黑边压在上面读得清
         frame_.fillRoundRect(sx, sy, sw, sh, sh / 2, boxCol);
+        // 一圈细玻璃边，让它看起来是个输入框而不是一块黑板
+        frame_.strokeGlassEdge(sx, sy, sw, sh, sh / 2, dark_, 1.0);
 
         // 放大镜（MDL2 字形）
         const int ix = sx + px(12);
@@ -1366,17 +1404,31 @@ void IslandWindow::redraw() {
     //   （实测：拖右边中部能拖，拖右下角完全没反应。）
     //
     //   详见 glass.h 里 ensureHitTestableEdges 的说明。
-    frame_.ensureHitTestableEdges();
+    // ⚠ 提交前要让鼠标能落在面板上：分层窗口的命中测试**只看 alpha**，
+    //   而岛台主体是纯透明的（buildFlatPanel 不铺底）——
+    //   不抬 alpha，格子空白处的点击/拖动会直接穿透到背后的窗口。
+    //   原来只抬了最外圈（ensureHitTestableEdges，为了四角能拖着改大小），
+    //   现在整块内容都抬到 alpha=1（1/255，肉眼不可见），见 glass.h 的说明。
+    RECT contentRc = {0, 0, w_, h_};
+    frame_.ensureHitTestableArea(contentRc, px(14),
+                                 hitTestAlphaFor(cfg_ ? cfg_->panelOpacity : 100));
+
+    // ★ 内容 + 外阴影合成到"带留白"的画布，再整幅提交。
+    //   落点要向左上各让出留白（dst = 内容位置 - 留白），
+    //   所以鼠标坐标要减掉同样的留白（见 contentPt）。
+    const int s = shadowInset();
+    outer_ = shadow_;
+    outer_.blendOver(frame_, s, s);
 
     HDC screen = GetDC(nullptr);
-    HBITMAP bmp = frame_.createPremultipliedBitmap(screen);
+    HBITMAP bmp = outer_.createPremultipliedBitmap(screen);
     if (bmp) {
         HDC mem = CreateCompatibleDC(screen);
         HGDIOBJ old = SelectObject(mem, bmp);
         POINT src = {0, 0};
-        SIZE size = {w_, h_};
+        SIZE size = {outer_.width(), outer_.height()};
         BLENDFUNCTION blend = {AC_SRC_OVER, 0, 255, AC_SRC_ALPHA};
-        POINT dst = {x_, y_};
+        POINT dst = {x_ - s, y_ - s};
         // ★ 全局面板透明度：滑块 0-100 作用在这一帧的整体 alpha 上
         if (cfg_) { int _op = cfg_->panelOpacity; if (_op < 0) _op = 0; if (_op > 100) _op = 100; blend.SourceConstantAlpha = (BYTE)((int)blend.SourceConstantAlpha * _op / 100); }
         UpdateLayeredWindow(hwnd_, screen, &dst, &size, mem, &src, 0, &blend, ULW_ALPHA);
@@ -1616,6 +1668,11 @@ POINT contentPt(HWND h, LPARAM l) {
         p.x += (c0.x - wr.left);
         p.y += (c0.y - wr.top);
     }
+    // ★ 再减掉外阴影留白：画面里的**内容**是从留白处开始画的
+    //   （提交时 UpdateLayeredWindow 的落点 = 内容位置 - 留白），
+    //   所以客户区坐标比内容坐标多出这一圈。
+    p.x -= islandShadowPx();
+    p.y -= islandShadowPx();
     return p;
 }
 
@@ -1668,11 +1725,17 @@ LRESULT IslandWindow::handle(HWND h, UINT msg, WPARAM w, LPARAM l) {
             RECT wr{};
             ::GetWindowRect(h, &wr);
 
+            // ★ 感应区贴着**内容**的四角，不是窗口外框 ——
+            //   窗口比内容大出一圈外阴影留白，用外框判的话，
+            //   用户对着看得见的角去拖，反而落在感应区外面（正好差一圈留白）。
+            const int shd = islandShadowPx();
+            const int cl = wr.left + shd, ct = wr.top + shd;
+            const int crr = wr.right - shd, cbb = wr.bottom - shd;
             const int edge = px(16);   // 四角感应区 24 物理像素（原来 8px 太难抓）
-            const bool left = pt.x < wr.left + edge;
-            const bool right = pt.x >= wr.right - edge;
-            const bool top = pt.y < wr.top + edge;
-            const bool bottom = pt.y >= wr.bottom - edge;
+            const bool left = pt.x < cl + edge;
+            const bool right = pt.x >= crr - edge;
+            const bool top = pt.y < ct + edge;
+            const bool bottom = pt.y >= cbb - edge;
 
             // 调试：记录一次命中，确认 WM_NCHITTEST 确实被调用了。
             // 只在真的命中边框时打，避免鼠标划过刷屏。
@@ -1703,7 +1766,7 @@ LRESULT IslandWindow::handle(HWND h, UINT msg, WPARAM w, LPARAM l) {
             // 顶部那条（搜索框上方、关闭按钮左边）当拖动柄。
             // ⚠ 不能整个顶部都算标题区 —— 那样点搜索框会被当成拖窗口。
             //   只在搜索框**上面**那条窄带算。
-            if (pt.y < wr.top + px(6) && pt.x < wr.right - px(40)) return HTCAPTION;
+            if (pt.y < ct + px(6) && pt.x < crr - px(40)) return HTCAPTION;
 
             return HTCLIENT;
         }
@@ -1738,11 +1801,14 @@ LRESULT IslandWindow::handle(HWND h, UINT msg, WPARAM w, LPARAM l) {
             // 拖动过程中每次都写配置会把磁盘刷爆。
             RECT wr{};
             ::GetWindowRect(h, &wr);
-            const int nw = wr.right - wr.left;
-            const int nh = wr.bottom - wr.top;
-            if (nw != w_ || nh != h_ || wr.left != x_ || wr.top != y_) {
+            // ★ 窗口矩形 = 内容 + 四周外阴影留白 → 先换算回内容尺寸/位置
+            const int shd = islandShadowPx();
+            const int nw = (wr.right - wr.left) - shd * 2;
+            const int nh = (wr.bottom - wr.top) - shd * 2;
+            const int nxp = wr.left + shd, nyp = wr.top + shd;
+            if (nw != w_ || nh != h_ || nxp != x_ || nyp != y_) {
                 w_ = nw; h_ = nh;
-                x_ = wr.left; y_ = wr.top;
+                x_ = nxp; y_ = nyp;
                 if (cfg_) {
                     cfg_->islandW = w_;
                     cfg_->islandH = h_;
@@ -1933,13 +1999,15 @@ layoutSearchEdit();     // 搜索框位置跟上就行
                 //   直接问系统要当前矩形最可靠。
                 RECT wr{};
                 if (::GetWindowRect(h, &wr)) {
-                    const int nw = wr.right - wr.left;
-                    const int nh = wr.bottom - wr.top;
+                    // ★ 窗口矩形 = 内容 + 留白 → 换算回内容几何再记
+                    const int shd = islandShadowPx();
+                    const int nw = (wr.right - wr.left) - shd * 2;
+                    const int nh = (wr.bottom - wr.top) - shd * 2;
                     if (nw > 0 && nh > 0) {
                         w_ = nw;
                         h_ = nh;
-                        x_ = wr.left;
-                        y_ = wr.top;
+                        x_ = wr.left + shd;
+                        y_ = wr.top + shd;
                     }
                 }
 
@@ -1959,18 +2027,18 @@ layoutSearchEdit();     // 搜索框位置跟上就行
         case WM_SIZING: {
             // 夹住最小尺寸，防止把面板拖成一条缝找不回来
             RECT* r = reinterpret_cast<RECT*>(l);
-            if (r->right - r->left < kMinW) {
+            if (r->right - r->left < kMinW + islandShadowPx() * 2) {   // 夹的是内容尺寸，窗口另加四周留白
                 if (w == WMSZ_LEFT || w == WMSZ_TOPLEFT || w == WMSZ_BOTTOMLEFT) {
-                    r->left = r->right - kMinW;
+                    r->left = r->right - (kMinW + islandShadowPx() * 2);
                 } else {
-                    r->right = r->left + kMinW;
+                    r->right = r->left + (kMinW + islandShadowPx() * 2);
                 }
             }
-            if (r->bottom - r->top < kMinH) {
+            if (r->bottom - r->top < kMinH + islandShadowPx() * 2) {
                 if (w == WMSZ_TOP || w == WMSZ_TOPLEFT || w == WMSZ_TOPRIGHT) {
-                    r->top = r->bottom - kMinH;
+                    r->top = r->bottom - (kMinH + islandShadowPx() * 2);
                 } else {
-                    r->bottom = r->top + kMinH;
+                    r->bottom = r->top + (kMinH + islandShadowPx() * 2);
                 }
             }
 
@@ -1984,8 +2052,8 @@ layoutSearchEdit();     // 搜索框位置跟上就行
             //   在这里实时同步，拖的时候就能看到面板跟着变。
             //
             //   不写配置（拖动中会连续触发），持久化交给 WM_EXITSIZEMOVE。
-            const int nw = r->right - r->left;
-            const int nh = r->bottom - r->top;
+            const int nw = (r->right - r->left) - islandShadowPx() * 2;
+            const int nh = (r->bottom - r->top) - islandShadowPx() * 2;
             if (nw > 0 && nh > 0 && (nw != w_ || nh != h_)) {
                 w_ = nw;
                 h_ = nh;

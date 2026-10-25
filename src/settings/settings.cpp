@@ -302,8 +302,11 @@ void SettingsWindow::createWindow(const std::string& version) {
         g_classReady = true;
     }
 
+    // ★ 窗口 = 内容 + 四周外阴影留白（x_/y_ 记的是**内容**左上角）
+    const int shd0 = shadowInset();
     hwnd_ = CreateWindowExW(WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TOPMOST, kClass, L"设置",
-                            WS_POPUP, x_, y_, winW_, winH_, nullptr, nullptr, hinst_, this);
+                            WS_POPUP, x_ - shd0, y_ - shd0, winW_ + shd0 * 2,
+                            winH_ + shd0 * 2, nullptr, nullptr, hinst_, this);
     if (!hwnd_) logf("settings: CreateWindow 失败 %lu", (unsigned long)GetLastError());
     (void)version;
 }
@@ -333,7 +336,8 @@ LRESULT SettingsWindow::handle(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 1;
 
         case WM_MOUSEMOVE: {
-            int mx = GET_X_LPARAM(lp), my = GET_Y_LPARAM(lp);
+            // ★ 客户区原点在「内容 - 留白」处（外阴影要留白）→ 命中判定用内容坐标
+            int mx = GET_X_LPARAM(lp) - shadowInset(), my = GET_Y_LPARAM(lp) - shadowInset();
             if (dragging_) {
                 POINT cur = {};
                 GetCursorPos(&cur);
@@ -342,7 +346,8 @@ LRESULT SettingsWindow::handle(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 if (abs(nx - x_) + abs(ny - y_) > px(2)) dragged_ = true;
                 x_ = nx;
                 y_ = ny;
-                SetWindowPos(hwnd_, nullptr, x_, y_, 0, 0,
+                const int shd = shadowInset();
+                SetWindowPos(hwnd_, nullptr, x_ - shd, y_ - shd, 0, 0,
                              SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
                 return 0;
             }
@@ -357,7 +362,8 @@ LRESULT SettingsWindow::handle(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
 
         case WM_LBUTTONDOWN: {
-            int mx = GET_X_LPARAM(lp), my = GET_Y_LPARAM(lp);
+            // ★ 客户区原点在「内容 - 留白」处（外阴影要留白）→ 命中判定用内容坐标
+            int mx = GET_X_LPARAM(lp) - shadowInset(), my = GET_Y_LPARAM(lp) - shadowInset();
             const Hit* h = hitAt(mx, my);
             if (h) {
                 pendingCb_ = h->cb;
@@ -383,7 +389,8 @@ LRESULT SettingsWindow::handle(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
 
         case WM_LBUTTONUP: {
-            int mx = GET_X_LPARAM(lp), my = GET_Y_LPARAM(lp);
+            // ★ 客户区原点在「内容 - 留白」处（外阴影要留白）→ 命中判定用内容坐标
+            int mx = GET_X_LPARAM(lp) - shadowInset(), my = GET_Y_LPARAM(lp) - shadowInset();
             if (dragging_) {
                 ReleaseCapture();
                 dragging_ = false;
@@ -448,6 +455,10 @@ LRESULT SettingsWindow::handle(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
 // ── 玻璃底 ──────────────────────────────────────
 
+int SettingsWindow::shadowInset() const {
+    return px(14);
+}
+
 void SettingsWindow::buildGlass() {
     glass_.create(winW_, winH_);
     const int radius = px(14);
@@ -458,29 +469,54 @@ void SettingsWindow::buildGlass() {
     glass_.cutRoundCorners(radius);
     // avg_ 只用于判断文字对比度，这里给一个中性值即可
     avg_ = dark_ ? rgb(27, 28, 32) : rgb(242, 243, 245);
+
+    // ★ 外阴影：与悬停面板同一套 —— 画布比内容大出四周留白，
+    //   影子只画在内容矩形之外，内容坐标不动。
+    const int s = shadowInset();
+    shadow_.create(winW_ + s * 2, winH_ + s * 2);
+    shadow_.clear();
+    RECT content = {s, s, s + winW_, s + winH_};
+    shadow_.applyOuterShadow(content, radius, dark_, px(2));
 }
 
 void SettingsWindow::rebuildGlassOffscreen() {
     if (!hasGlass_ || !hwnd_) return;
     // 直接抓会把自己拍进去，所以先让开
-    SetWindowPos(hwnd_, nullptr, -20000, -20000, winW_, winH_,
+    // ★ 窗口尺寸/位置都要带上外阴影留白（x_/y_/winW_/winH_ 是**内容**的）
+    const int s = shadowInset();
+    SetWindowPos(hwnd_, nullptr, -20000, -20000, winW_ + s * 2, winH_ + s * 2,
                  SWP_NOREDRAW | SWP_NOACTIVATE | SWP_NOZORDER);
     Sleep(16);
     buildGlass();
     redraw();
-    SetWindowPos(hwnd_, nullptr, x_, y_, winW_, winH_, SWP_NOACTIVATE | SWP_NOZORDER);
+    SetWindowPos(hwnd_, nullptr, x_ - s, y_ - s, winW_ + s * 2, winH_ + s * 2,
+                 SWP_NOACTIVATE | SWP_NOZORDER);
     SetForegroundWindow(hwnd_);
 }
 
 void SettingsWindow::pushFrame() {
     HDC screen = GetDC(nullptr);
     if (!screen) return;
-    HBITMAP bmp = frame_.createPremultipliedBitmap(screen);
+    // ★ 让整块设置窗都能收鼠标：分层窗口的命中测试**只看 alpha**，
+    //   而设置窗主体是纯透明的（buildFlatPanel 不铺底）——
+    //   不抬 alpha，面板里点一下会直接穿透到背后的窗口
+    //   （用户："设置跟岛台的出现问题了"）。
+    RECT contentRc = {0, 0, winW_, winH_};
+    frame_.ensureHitTestableArea(contentRc, px(14),
+                                 hitTestAlphaFor(cfg_ ? cfg_->panelOpacity : 100));
+
+    // ★ 内容 + 外阴影合成到"带留白"的画布再整幅提交；
+    //   落点向左上各让出留白（dst = 内容位置 - 留白）。
+    const int s = shadowInset();
+    outer_ = shadow_;
+    outer_.blendOver(frame_, s, s);
+
+    HBITMAP bmp = outer_.createPremultipliedBitmap(screen);
     if (bmp) {
         HDC mem = CreateCompatibleDC(screen);
         HGDIOBJ old = SelectObject(mem, bmp);
-        POINT dst = {x_, y_};
-        SIZE sz = {winW_, winH_};
+        POINT dst = {x_ - s, y_ - s};
+        SIZE sz = {outer_.width(), outer_.height()};
         POINT src = {0, 0};
         BLENDFUNCTION bf = {AC_SRC_OVER, 0, 255, AC_SRC_ALPHA};
         // ★ 全局面板透明度：滑块 0-100 作用在这一帧的整体 alpha 上

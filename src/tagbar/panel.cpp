@@ -386,7 +386,8 @@ void HoverPanel::redraw() {
     //   只有边框和阴影那几圈返回 HotrainyPanel。抬到 alpha=1 后恢复正常，
     //   1/255 ≈ 0.4% 的不透明度，肉眼看不出来。
     RECT contentRc = {0, 0, w_, h_};
-    frame_.ensureHitTestableArea(contentRc, cornerRadius());
+    frame_.ensureHitTestableArea(contentRc, cornerRadius(),
+                                 hitTestAlphaFor(cfg_ ? cfg_->panelOpacity : 100));
 
     // ★ 内容 + 外阴影合成到"带留白"的画布，再整幅提交。
     //   窗口落点要向左上各让出留白（dst = 内容位置 - 留白），

@@ -460,7 +460,8 @@ void BarWindow::redraw() {
     // ★ 栏底是纯透明的 → 分层窗口会把鼠标穿透掉；把命中区补回来，
     //   否则标签/图标既点不动也悬停不了（命中测试只看 alpha）。
     RECT barRc = {0, 0, width_, height_};
-    frame_.ensureHitTestableArea(barRc, px(8));
+    frame_.ensureHitTestableArea(barRc, px(8),
+                                 hitTestAlphaFor(cfg_ ? cfg_->panelOpacity : 100));
 
     HDC screen = GetDC(nullptr);
     HBITMAP bmp = frame_.createPremultipliedBitmap(screen);

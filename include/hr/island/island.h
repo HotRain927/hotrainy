@@ -112,6 +112,11 @@ private:
     // ── 布局与绘制 ──
     void layout();
     void rebuildBase();
+
+    // ★ 外阴影留白（逻辑像素，走 px() 换算）——与悬停面板同一套：
+    //   窗口向外扩这么多，内容坐标**一像素不动**；
+    //   只有"跟系统打交道"的地方要减掉它（提交、鼠标坐标、窗口矩形、输入框摆放）。
+    int shadowInset() const;
     void redraw();
     void refreshBackdrop();
 
@@ -188,8 +193,10 @@ private:
     HINSTANCE hinst_ = nullptr;
     Config* cfg_ = nullptr;
 
-    Surface base_;      // 缓存的玻璃底
-    Surface frame_;     // 本帧：底 + 内容
+    Surface base_;      // 缓存的玻璃底（内容大小）
+    Surface frame_;     // 本帧：底 + 内容（内容大小）
+    Surface shadow_;    // 画布大小：只含外圈影子
+    Surface outer_;     // 画布大小：shadow_ + frame_ → 提交给窗口
     Backdrop backdrop_;
     bool baseValid_ = false;
     // 上次重抓背景时的前台窗口 —— 用来判断"背景要不要重抓"（透明实时更新）。
