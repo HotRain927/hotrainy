@@ -1450,7 +1450,12 @@ int main() {
         setDialogDark(d);
     };
     if (!g_panel.create(GetModuleHandleW(nullptr), &g_cfg)) return 1;
-    g_panel.setDark(g_cfg.taskbarTextColor == L"light");   // 跟随「文字颜色」设置
+    // ★ 这一行原来写的是 setDark(taskbarTextColor == L"light")，会**覆盖**上面
+    //   刚设好的 setDark(true) —— 于是「文字颜色」又把面板的深浅带跑了
+    //   （用户 taskbarTextColor = "dark" → 面板变浅色 → 雾走浅色那支发白，
+    //     "标签面板跟设置/岛台颜色不一样"）。
+    //   那个设置的作用范围现在只剩任务栏右侧的系统文字（见上面 1441 行的说明）。
+    g_panel.setDark(panelDark);   // 与标签栏 / 岛台 / 设置统一深色玻璃
     g_panel.setFontSize(g_cfg.shortcutFontSize);
     if (!g_search.create(GetModuleHandleW(nullptr), &g_cfg, g_dark)) return 1;
     searchWire();   // 搜索模块的接线（已搬到 src/search/search_wire.cpp）

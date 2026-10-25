@@ -141,6 +141,19 @@ public:
     //     hitTestAlphaFor(panelOpacity) 传一个"缩完仍 >= 1"的值。
     void ensureHitTestableArea(const RECT& rc, int radius, uint8_t floorAlpha = 1);
 
+    // ★ 给"小元素"用的柔和阴影：在任意圆角矩形**外围**画一圈羽化暗环。
+    //
+    //   和 applyOuterShadow 的区别：那个是画布级的（面板整幅提交时用，
+    //   靠"到内容矩形的有符号距离"全画布衰减）；这个只处理一个小矩形，
+    //   用于拖动残影这类"浮起来的格子"。两者衰减曲线一致，观感统一。
+    //   reach = 往外羽化的像素数。
+    void drawSoftShadow(int x, int y, int w, int h, int radius, bool dark, int reach);
+
+    // ★ 按「面板透明度」给主体铺一层中性雾（0 = 不铺，保持纯透明）。
+    //   buildFlatPanel = fillFog + 边框；标签栏只要雾、不要边框，
+    //   所以单独抽出来（那条横贯全屏的黑线是用户要求删掉的）。
+    void fillFog(int opacityPercent, int radius, bool dark);
+
     // 设置玻璃的不透明度（0.0 = 全透，1.0 = 完全不透明）。
     //
     // ⚠ 默认的 buildPanel / buildBar 会把底色强制成不透明（alpha=255），

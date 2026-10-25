@@ -530,24 +530,37 @@ bool Surface::buildCard(const Backdrop& bd, bool dark, int radius, int blur, int
 // ★ 全局面板透明度 + 恒定细边框。
 //   opacityPercent = 0 时不铺底色（完全透出背后内容，只剩图标与文字）；
 //   无论底色铺不铺，都画一圈极细的"液态"边框 —— 面板透明了，边框还在。
+// ★ 主体「雾化」底 —— 这才是「面板透明度」该干的事：按百分比铺一层中性雾。
+//   0 = 什么都不铺（纯透明，背后画面直接透出来）；推大 → 越来越像磨砂玻璃。
+//
+//   ⚠ 这里原来是 (void)p、什么都不铺，而滑块改成在提交时乘 SourceConstantAlpha ——
+//     那会把**整帧**（含文字、图标、边框）一起变透明。用户反馈：
+//       「面板透明度为啥是调的文字的透明度，应该是让面板背景一点点加点雾化」。
+//   现在雾只铺在主体上，文字/图标/边框保持不透明。
+//
+//   抽成独立函数：标签栏也要这层雾，但**不要**边框（见 bar.cpp 的 rebuildBase）。
+//   雾色只有两种（深/浅），三个面板 + 标签栏共用，所以颜色天然一致 ——
+//   之前标签面板看着"跟别人不一样"，是因为它的 dark_ 被那行漏改的
+//   setDark(taskbarTextColor) 带成了浅色。
+void Surface::fillFog(int opacityPercent, int radius, bool dark) {
+    if (width() <= 0 || height() <= 0) return;
+    int p = opacityPercent;
+    if (p < 0) p = 0;
+    if (p > 100) p = 100;
+    if (p <= 0) return;
+    const uint32_t fogRgb = dark ? 0x00101216u : 0x00F1F3F7u;   // 只取 RGB
+    const int maxA = dark ? 0xC8u : 0xA6u;                       // 100% 时的雾浓度
+    const uint32_t col = ((uint32_t)(maxA * p / 100) << 24) | fogRgb;
+    fillRoundRect(0, 0, w_, h_, radius, col);
+}
+
 void Surface::buildFlatPanel(int opacityPercent, int radius, bool dark) {
     if (width() <= 0 || height() <= 0) return;
     int p = opacityPercent;
     if (p < 0) p = 0;
     if (p > 100) p = 100;
-    // ★ 主体「雾化」底 —— 这才是「面板透明度」该干的事：按百分比铺一层中性雾。
-    //   0 = 什么都不铺（纯透明，背后画面直接透出来）；推大 → 越来越像磨砂玻璃。
-    //
-    //   ⚠ 这里原来是 (void)p、什么都不铺，而滑块改成在提交时乘 SourceConstantAlpha ——
-    //     那会把**整帧**（含文字、图标、边框）一起变透明。用户反馈：
-    //       「面板透明度为啥是调的文字的透明度，应该是让面板背景一点点加点雾化」。
-    //   现在雾只铺在主体上，文字/图标/边框保持不透明。
-    if (p > 0) {
-        const uint32_t fogRgb = dark ? 0x00101216u : 0x00F1F3F7u;   // 只取 RGB
-        const int maxA = dark ? 0xC8u : 0xA6u;                       // 100% 时的雾浓度（用户：原来太弱）
-        const uint32_t col = ((uint32_t)(maxA * p / 100) << 24) | fogRgb;
-        fillRoundRect(0, 0, w_, h_, radius, col);
-    }
+    // ★ 主体「雾化」底（说明见 fillFog）。
+    fillFog(p, radius, dark);
 
     // ═══ 边框：一圈"看得清"的细边 + 内侧一道更亮的高光（玻璃的厚度感）═══════
     //   ① 最外 1px 暗轮廓 —— 壁纸是浅色时靠它把面板轮廓"描"出来
@@ -569,6 +582,38 @@ void Surface::buildFlatPanel(int opacityPercent, int radius, bool dark) {
 //
 //   现在：窗口向外扩留白（panel.cpp 负责），内容位置不变，
 //   这里只按"到内容圆角矩形的有符号距离"往外衰减画影子。
+// ★ 小元素柔和阴影：矩形内部一个像素都不动，只在外圈按距离衰减。
+//
+//   衰减曲线故意和 applyOuterShadow 用同一条 (1-t)^2 —— 这样拖动残影的影子
+//   和面板的影子是"同一种影子"，拼在一屏里不会有两种质感。
+void Surface::drawSoftShadow(int x, int y, int w, int h, int radius, bool dark, int reach) {
+    if (w <= 0 || h <= 0 || reach <= 0 || w_ <= 0 || h_ <= 0) return;
+
+    const double peak = dark ? 0.46 : 0.30;
+    const int x0 = x - reach, y0 = y - reach;
+    const int x1 = x + w + reach, y1 = y + h + reach;
+    const double cx = x + w * 0.5, cy = y + h * 0.5;
+    const double ex = w * 0.5 - radius, ey = h * 0.5 - radius;
+
+    for (int py = (y0 < 0 ? 0 : y0); py <= y1 && py < h_; ++py) {
+        for (int pxx = (x0 < 0 ? 0 : x0); pxx <= x1 && pxx < w_; ++pxx) {
+            double dx = std::fabs((pxx + 0.5) - cx) - ex;
+            double dy = std::fabs((py + 0.5) - cy) - ey;
+            if (dx < 0) dx = 0;
+            if (dy < 0) dy = 0;
+            const double d = std::sqrt(dx * dx + dy * dy) - radius;
+            if (d <= 0) continue;                      // 矩形内部不动
+            const double t = d / (double)reach;
+            if (t >= 1.0) continue;
+            const double a = peak * (1.0 - t) * (1.0 - t);
+            if (a <= 0.004) continue;
+            const uint32_t col = (uint32_t)std::lround(a * 255.0) << 24;
+            const size_t o = (size_t)py * w_ + pxx;
+            px_[o] = blendSrcOverA(px_[o], col, 1.0);
+        }
+    }
+}
+
 void Surface::applyOuterShadow(const RECT& contentRect, int radius, bool dark, int offsetY) {
     if (w_ <= 0 || h_ <= 0) return;
     const int cl = contentRect.left, ct = contentRect.top;

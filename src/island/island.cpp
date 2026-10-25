@@ -182,6 +182,16 @@ void IslandWindow::destroy() {
 // ── 显示 / 隐藏 ─────────────────────────────────────────────────────
 
 void IslandWindow::show(int anchorX, int anchorY) {
+    // ★ 打开时把拖动状态清干净（见长按定时器里的说明：残留的 dragArmed_
+    //   会让面板一打开就"自动"抓起某个快捷方式）。
+    dragArmed_ = false;
+    dragCell_ = -1;
+    dragTarget_ = -1;
+    pressedCell_ = -1;
+    if (hwnd_) {
+        ::KillTimer(hwnd_, kDragTimerId);
+        ::KillTimer(hwnd_, kDragAnimTimerId);
+    }
     if (!hwnd_ || !cfg_) return;
 
     w_ = cfg_->islandW;
@@ -272,6 +282,15 @@ void IslandWindow::show(int anchorX, int anchorY) {
 }
 
 void IslandWindow::hide() {
+    // ★ 关闭时同样清干净：否则下次打开会带着上一次的 armed 状态。
+    dragArmed_ = false;
+    dragCell_ = -1;
+    dragTarget_ = -1;
+    pressedCell_ = -1;
+    if (hwnd_) {
+        ::KillTimer(hwnd_, kDragTimerId);
+        ::KillTimer(hwnd_, kDragAnimTimerId);
+    }
     if (!hwnd_) return;
 
     // ★ 面板收起时，把正在打开的菜单（电源/右键）一起关掉。
@@ -1330,18 +1349,25 @@ void IslandWindow::redraw() {
                 cx = std::max(gridX_, std::min(cx, gridX_ + gridW_ - cellW_));
                 cy = std::max(gridY_, std::min(cy, gridY_ + gridH_ - cellH_));
 
-                // 先画一层"抬起来"的底：略大的圆角 + 阴影感
+                // ★ 残影做成"面板同款"。
+                //
+                //   之前这里是 3px 的硬白描边（strokeRoundRect + 0x90F5F5F7），
+                //   用户："鼠标长按选中的时候那个边框太难看了"。
+                //   现在与面板/标签/图标走同一套观感：
+                //     ① 柔和外阴影（只落在矩形外圈，不盖格子内容）
+                //     ② 半透明底（和面板的雾同一个色系）
+                //     ③ strokeGlassEdge —— 一暗一亮两道细边（玻璃厚度感）
                 const int pad = px(6);
-                frame_.fillRoundRect(cx - pad, cy - pad,
-                                     cellW_ + pad * 2, cellH_ + pad * 2,
-                                     px(12), dark_ ? 0x50000000 : 0x38000000);
+                const int gx = cx - pad, gy = cy - pad;
+                const int gw = cellW_ + pad * 2, gh = cellH_ + pad * 2;
+                const int gr = px(12);
+
+                frame_.drawSoftShadow(gx, gy, gw, gh, gr, dark_, px(10));
+                frame_.fillRoundRect(gx, gy, gw, gh, gr,
+                                     dark_ ? 0x46101216u : 0x40F1F3F7u);
+                frame_.strokeGlassEdge(gx, gy, gw, gh, gr, dark_, (float)1.6);
 
                 drawGridCell(dFrom, cx, cy, cellW_, cellH_, true);
-
-                // 描边强调
-                frame_.strokeRoundRect(cx - pad, cy - pad,
-                                       cellW_ + pad * 2, cellH_ + pad * 2,
-                                       px(12), 0x90F5F5F7, (float)px(2));
             }
 
             // 多页时右下角显示页码
@@ -1960,6 +1986,20 @@ layoutSearchEdit();     // 搜索框位置跟上就行
                 if (dragArmed_ && dragCell_ < 0) {
                     const DWORD held = ::GetTickCount() - dragStartTick_;
                     if (held >= kDragHoldMs) {
+                        // ★ 到点必须确认**左键此刻仍按着**。
+                        //
+                        //   踩过的坑（用户："有时候点开面板的时候，
+                        //   它会自动拖动一个快捷方式"）：
+                        //   只要上一次按下的 WM_LBUTTONUP 丢了（点到别的窗口、
+                        //   被系统吞掉、面板刚打开时就松了手），
+                        //   dragArmed_ 就会一直留着 ——
+                        //   长按定时器一到，就凭空抓起一个格子开始拖。
+                        if ((::GetAsyncKeyState(VK_LBUTTON) & 0x8000) == 0) {
+                            dragArmed_ = false;
+                            ::KillTimer(h, kDragTimerId);
+                            logf("island: 长按到点但左键已松开（残留 armed）→ 取消拖动");
+                            return 0;
+                        }
                         dragCell_ = pressedCell_;
                         dragTarget_ = dragCell_;
                         dragShiftT_ = 1.0;      // 初始就是"已就位"，没有待播动画

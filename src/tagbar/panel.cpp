@@ -79,6 +79,14 @@ void HoverPanel::setFontSize(int size) {
 }
 
 void HoverPanel::onConfigChanged() {
+    // ★ 必须**无条件**作废缓存底。
+    //
+    //   踩过的坑（用户报的："标签面板没有随着雾化，只有设置面板跟岛台面板雾化了"）：
+    //   原来只写 if (visible_) ...，而改「面板透明度」时标签面板**正好是隐藏的**
+    //   （main 的 applySetting 甚至先调 hidePanel()）——
+    //   于是那个用旧浓度烘焙的 base_ 一直留着，下次打开还是旧雾（甚至完全没雾）。
+    //   同文件的 setDark() 就是无条件作废的写法，这里对齐它。
+    baseValid_ = false;
     if (visible_) layout(), rebuildBase(), redraw();
 }
 

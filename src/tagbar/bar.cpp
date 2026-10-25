@@ -282,6 +282,9 @@ void BarWindow::setMenuOpen(bool open) { menuOpen_ = open; }
 void BarWindow::onConfigChanged() {
     relayout();
     if (cfg_ && active_ >= (int)cfg_->tabs.size()) active_ = (int)cfg_->tabs.size() - 1;
+    // ★ 底是按「面板透明度」烘焙的 → 改了透明度必须**重建底**，只 redraw() 不更新
+    //   （和 HoverPanel::onConfigChanged 踩的是同一个坑）。
+    rebuildBase();
     redraw();
 }
 
@@ -332,6 +335,13 @@ void BarWindow::rebuildBase() {
     //     所以 redraw 里必须调 ensureHitTestableArea() 把命中区补回来，
     //     否则标签点不动、也悬停不了。
     base_.clear();
+
+    // ★ 主体也跟着「面板透明度」雾化（用户："同时标签那里也要跟着变化哦"）——
+    //   和三个面板走**同一个** fillFog，所以颜色浓度天然一致。
+    //   ⚠ 这里只取雾，**不画边框**：栏的那圈边框仍然交给每个标签/图标各自画
+    //     （见上面那条说明；横贯全屏的黑线是明确要求删掉的）。
+    //   radius 传 0：栏是横贯屏幕的一条，不需要圆角。
+    base_.fillFog(cfg_ ? cfg_->panelOpacity : 0, 0, dark_);
 }
 
 void BarWindow::redraw() {
