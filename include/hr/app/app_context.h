@@ -30,6 +30,11 @@ SearchWindow&  search();      // 搜索窗
 SettingsWindow& settings();   // 设置窗
 HWND           msgWnd();      // 主消息窗
 HWND&          dialogDismissed();  // 搜索窗自动收起时要关掉的那个对话框句柄
+DWORD&         iconClickTick();    // 任务栏岛台按钮最近一次点击的时刻
+DWORD&         pendingCloseTick(); // 挂起的"点外收起"时刻
+
+// 打开/收起岛台面板（原 main.cpp 内部 toggleIslandPanel 的外部包装；故意不同名以免歧义）
+void toggleIslandPanelWire(RECT btn);
 
 // 设置项生效入口（main.cpp 内部 applySetting 的外部包装，故意不同名以免重载歧义）
 bool applySettingKey(const std::string& key);

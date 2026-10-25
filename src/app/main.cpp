@@ -164,25 +164,7 @@ void enableIslandTakeover() {
             slot.bottom = slot.top + 72;
         }
 
-        g_islandBtn.onClick = []() {
-            logf("islandbtn: 被点击");
-
-            // 记下时刻，让"点外检查"在接下来这段时间里让路 ——
-            // 否则它会先收面板，然后 WM_ACTIVATE 又打开，
-            // 净效果是"点了没反应"。
-            g_iconClickTick = ::GetTickCount();
-
-            // 撤销挂起的"点外收起"：这次点击是冲我们的图标来的，
-            // 由 toggle 处理，不该再被当成"点外面"。
-            if (g_pendingCloseTick) {
-                logf("island: 撤销挂起的点外收起（这次点的是岛台图标）");
-                g_pendingCloseTick = 0;
-            }
-
-            RECT r{};
-            if (g_islandBtn.alive()) ::GetWindowRect(g_islandBtn.hwnd(), &r);
-            toggleIslandPanel(r);
-        };
+        g_islandBtn.onClick = onIslandButtonClick;   // 实现见 src/island/island_wire.cpp（合并了原来的两份）
 
         g_islandBtn.setDark(g_dark);
         g_islandBtn.create(GetModuleHandleW(nullptr), slot);
@@ -327,25 +309,7 @@ void applyIslandEnabled(bool on) {
 
         {
             if (!g_islandBtn.alive()) {
-                g_islandBtn.onClick = []() {
-                    logf("islandbtn: 被点击");
-
-                    // 记下时刻，让"点外检查"在接下来这段时间里让路 ——
-                    // 否则它会先收面板，然后 WM_ACTIVATE 又打开，
-                    // 净效果是"点了没反应"。
-                    g_iconClickTick = ::GetTickCount();
-
-                    // 撤销挂起的"点外收起" ——
-                    // 这次点击是冲我们的图标来的，由 toggle 处理，
-                    // 不该再被当成"点外面"。
-                    if (g_pendingCloseTick) {
-                        logf("island: 撤销挂起的点外收起（这次点的是岛台图标）");
-                        g_pendingCloseTick = 0;
-                    }
-                    RECT r{};
-                    if (g_islandBtn.alive()) ::GetWindowRect(g_islandBtn.hwnd(), &r);
-                    toggleIslandPanel(r);
-                };
+                g_islandBtn.onClick = onIslandButtonClick;   // 实现见 src/island/island_wire.cpp（合并了原来的两份）
                 g_islandBtn.setDark(g_dark);
                 g_islandBtn.create(GetModuleHandleW(nullptr), slot);
             } else {
@@ -1750,5 +1714,8 @@ SearchWindow&   search()     { return g_search; }
 SettingsWindow& settings()   { return g_settings; }
 HWND            msgWnd()     { return g_msgWnd; }
 HWND&           dialogDismissed() { return g_dialogDismissed; }
+DWORD&          iconClickTick()   { return g_iconClickTick; }
+DWORD&          pendingCloseTick() { return g_pendingCloseTick; }
+void            toggleIslandPanelWire(RECT btn) { ::toggleIslandPanel(btn); }
 bool            applySettingKey(const std::string& key) { return ::applySetting(key); }
 }  // namespace hr
