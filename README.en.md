@@ -22,8 +22,8 @@ Portable by design: **no admin rights, no MSVC runtime (static CRT), no registry
 
 ## Requirements
 
-- Windows 11 (taskbar transparency needs the Win11 XAML taskbar; the island, tag bar and audio bar
-  also work on Windows 10)
+- **Windows 11 only — Windows 10 is *not* supported** (taskbar transparency and the island button
+  both rely on the Win11 XAML taskbar)
 - Visual Studio 2022 (Build Tools are enough) + Windows SDK — only if you build from source
 
 ## Download & install
