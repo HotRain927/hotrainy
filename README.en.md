@@ -91,8 +91,44 @@ audio bar). See [`docs/`](docs/) for the pitfalls we hit (the `pptDst` argument 
 `SW_HIDE`/`SW_SHOW` does not restore a layered surface; `WM_SETCURSOR` is what changes the border
 cursor; never capture the screen inside `WM_ENTERSIZEMOVE`, …).
 
+## Privacy & security
+
+**The program never touches the network.** There is no networking API anywhere in the source
+(no WinHttp / WinINet / socket / curl) and not a single `http(s)://` URL — it does not upload,
+report or collect anything. The only IPC is a local channel between the app and its injected module.
+
+**What it reads and writes**
+
+| Location | Purpose |
+|---|---|
+| `%APPDATA%\hotrainy\` | its own config (`config.json`), per-tab wallpapers, search index, logs |
+| `%LOCALAPPDATA%\hotrainy\` | logs of the injected module (`tap.log` / `boot.log` / `crash.log`) |
+| `HKCU\...\CurrentVersion\Run` | only if **you** enable "start with Windows" (one per-user startup entry) |
+
+It does not write to system folders, install services or register COM components.
+
+**It injects into explorer.exe — why**
+
+Taskbar transparency requires modifying the Windows 11 taskbar, whose appearance is drawn by XAML.
+The app uses `SetWindowsHookEx` to load its own DLL into Explorer and does exactly one thing: hide or
+restore a rectangle named `BackgroundFill` in the taskbar's visual tree. There are no keyboard hooks,
+no credential access, no network access, and nothing beyond that single visual change.
+
+**Antivirus false positives**
+
+"Inject into Explorer and modify system UI" is the technique every tool in this space uses
+(TranslucentTB, RoundedTB, ExplorerPatcher, …) and it is also used by some malware, so Defender,
+Huorong or 360 may flag the installer. That is a false positive — adding an exclusion is fine. If you
+want to be certain, build it from source yourself or wait for a code-signed build.
+
+**Disclaimer**
+
+This program modifies the system taskbar appearance. A Windows update may break parts of it, and it
+can conflict with other taskbar tools (TranslucentTB, RoundedTB, ExplorerPatcher) — **keep only one**.
+Use at your own risk; the project is provided "as is" under the MIT license, without warranty.
+
 ## License
 
 MIT — see [LICENSE](LICENSE). Taskbar transparency was informed by the *technical principles* of
 TranslucentTB (GPL-3.0); all code in this repository is original. See
-[`docs/许可证与原创性说明.md`](docs/许可证与原创性说明.md).
+[`docs/许可证与原创性说明.md`](docs/许可证与原创性说明.md). An originality self-audit against TranslucentTB's real source (file size, identifier sets, implementation mechanism, comment language) is archived in `docs/原创性比对报告.md`.
