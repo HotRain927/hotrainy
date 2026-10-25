@@ -29,7 +29,7 @@
 // ═══════════════════════════════════════════════════════════════════════
 #include "hr/tb/xaml/injector.h"
 
-#include "hr/common.h"
+#include "hr/shared/common.h"
 #include "hr/tb/xaml/interfaces.h"
 #include "hr/tb/xaml/channel.h"
 

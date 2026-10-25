@@ -43,7 +43,7 @@
 #include <atomic>
 #include <mutex>
 
-// ⚠ 不要 include "hr/common.h" 也不要调 logf。
+// ⚠ 不要 include "hr/shared/common.h" 也不要调 logf。
 //
 // 这个文件同时被编译进 GlassTAP.dll（功能层）。
 // 功能层不该依赖主程序的日志模块 —— 那会拖进一堆无关依赖，

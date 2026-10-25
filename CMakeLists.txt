@@ -154,7 +154,13 @@ set_target_properties(GlassTAP PROPERTIES
 )
 
 # ── 2. hotrainy.exe（主程序）─────────────────────────────────────────
+# ★ 按模块目录收集源文件（重构后每个模块一个子目录）。
+#   注意用逐目录列举而不是 GLOB_RECURSE，避免把 src/tb/** 重复收进来。
 file(GLOB HR_SOURCES "${CMAKE_SOURCE_DIR}/src/*.cpp")
+foreach(mod app tagbar island settings search text audio glass shared)
+    file(GLOB _HR_MOD "${CMAKE_SOURCE_DIR}/src/${mod}/*.cpp")
+    list(APPEND HR_SOURCES ${_HR_MOD})
+endforeach()
 file(GLOB HR_TB_SOURCES "${CMAKE_SOURCE_DIR}/src/tb/*.cpp")
 file(GLOB HR_XAML_SOURCES "${CMAKE_SOURCE_DIR}/src/tb/xaml/*.cpp")
 list(APPEND HR_SOURCES ${HR_TB_SOURCES} ${HR_XAML_SOURCES})

@@ -17,7 +17,7 @@
 
 #include "hr/tb/xaml/taplog.h"
 #include "hr/tb/xaml/channel.h"
-#include "hr/island_theme.h"   // 岛台配色常量（单一来源，轻量头）
+#include "hr/text/island_theme.h"   // 岛台配色常量（单一来源，轻量头）
 
 #include <xamlOM.h>
 
@@ -533,7 +533,7 @@ HRESULT probeInjectElement(bool insert) {
         icon.FontFamily(wux::Media::FontFamily(L"Segoe MDL2 Assets"));
         icon.Glyph(L"\uE71D");
         icon.FontSize(16);
-        // ⚠ 颜色从 hr/island.h 的常量来 —— 和岛台面板文字同一个值。
+        // ⚠ 颜色从 hr/island/island.h 的常量来 —— 和岛台面板文字同一个值。
         //   两处各写各的话，改了面板忘了按钮就会出现色差。
         icon.Foreground(wux::Media::SolidColorBrush(
             winrt::Windows::UI::ColorHelper::FromArgb(
