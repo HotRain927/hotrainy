@@ -490,63 +490,97 @@ void Surface::buildFlatPanel(int opacityPercent, int radius, bool dark) {
     int p = opacityPercent;
     if (p < 0) p = 0;
     if (p > 100) p = 100;
-    (void)p;   // 主体保持纯透明（不铺任何色底），浓淡由窗口级 alpha 负责
+    (void)p;   // ★ 主体纯透明：不铺任何底色、不雾化（面板透出背后画面）
 
-    // ═══════════════════════════════════════════════════════════════════════
-    //  液态玻璃边框（思路参考同类"玻璃面板"工具的做法：把边沿当作有厚度的
-    //  小斜面来打光，而不是画一条线。这里用 CPU 描边模拟，不依赖任何 shader。）
-    //
-    //  ① 微斜面：5 圈同心圆角描边，从外到内亮度按方向光渐变 → 厚度感
-    //  ② 方向光：左上受光偏亮、右下背光偏暗
-    //  ③ 色散暗示：最外圈极淡冷色、最内圈极淡暖色（很克制，3~6/255）
-    //  ④ 内侧光晕：斜面再往里一圈极淡高光，让"玻璃厚度"过渡自然
-    // ═══════════════════════════════════════════════════════════════════════
-    const int rings = 5;
-    // 受光/背光的基准色（深色主题下用亮边，浅色主题下用暗边）
-    const uint32_t litR = dark ? 0xFFu : 0x00u, litG = dark ? 0xFFu : 0x00u, litB = dark ? 0xFFu : 0x00u;
-
-    auto ring = [&](int i) {
-        // i = 0 最外圈（接触桌面，最暗）→ i 越大越靠内（越亮，模拟斜面迎光）
-        int a;
-        if (i == 0)      a = dark ? 0x2Au : 0x26u;   // 接触阴影
-        else if (i == 1) a = dark ? 0x3Cu : 0x33u;
-        else if (i == 2) a = dark ? 0x50u : 0x40u;
-        else if (i == 3) a = dark ? 0x66u : 0x4Cu;   // 受光面
-        else             a = dark ? 0x3Cu : 0x2Eu;   // 内侧收一点，避免"发白"
-        uint32_t col = ((uint32_t)a << 24) | (litR << 16) | (litG << 8) | litB;
-        // ★ 整体内缩 1px：否则边框画在画布最边缘，会被 cutRoundCorners 把四角弧线裁掉
-        int x = i + 1, y = i + 1;
-        int w = w_ - 2 * (i + 1), h = h_ - 2 * (i + 1);
-        int r = radius - i - 1; if (r < 1) r = 1;
-        if (w > 2 && h > 2) strokeRoundRect(x, y, w, h, r, col, 1.0f);
-    };
-    for (int i = 0; i < rings; ++i) ring(i);
-
-    // ③ 色散暗示：外冷内暖（各 1px，极淡）
-    strokeRoundRect(1, 1, w_ - 2, h_ - 2, radius > 1 ? radius - 1 : 1, 0x0A60A0FFu, 1.0f);          // 最外：极淡冷
-    {
-        int ri = rings - 1;
-        int w2 = w_ - 2 * ri, h2 = h_ - 2 * ri;
-        int r2 = radius - ri; if (r2 < 1) r2 = 1;
-        if (w2 > 2 && h2 > 2) strokeRoundRect(ri + 1, ri + 1, w2, h2, r2, 0x0AFFB060u, 1.0f);   // 内圈：极淡暖
+    // ═══ 细边框：透明面板上"看得见"，但不是硬黑边 ═══════════════════════════
+    //   ① 主边 1px（近白/近黑，alpha 中高）—— 让面板轮廓清楚
+    //   ② 内侧 1px 更亮的高光 —— 玻璃的镜面感
+    //   ③ 底部再压一道极淡暗边 —— 轻微立体感（厚斜面已去掉，厚了会显脏）
+    const int rr = radius > 1 ? radius - 2 : 1;
+    const uint32_t mainCol = dark ? 0x70FFFFFFu : 0x5A000000u;
+    const uint32_t hiCol   = dark ? 0x96FFFFFFu : 0x70000000u;
+    const uint32_t lowCol  = dark ? 0x26000000u : 0x1C000000u;
+    strokeRoundRect(2, 2, w_ - 4, h_ - 4, rr, mainCol, 1.0f);
+    if (w_ > 8 && h_ > 8) {
+        strokeRoundRect(3, 3, w_ - 6, h_ - 6, rr > 1 ? rr - 1 : 1, hiCol, 1.0f);
+        strokeRoundRect(2, 3, w_ - 4, h_ - 4, rr, lowCol, 1.0f);
     }
+}
 
-    // ④ 内侧光晕：斜面再向内一圈的柔光，模拟玻璃内部的厚度过渡
-    {
-        int gi = rings;
-        int w3 = w_ - 2 * gi, h3 = h_ - 2 * gi;
-        int r3 = radius - gi; if (r3 < 1) r3 = 1;
-        uint32_t glow = dark ? 0x14FFFFFFu : 0x10000000u;
-        if (w3 > 2 && h3 > 2) strokeRoundRect(gi, gi, w3, h3, r3, glow, 1.0f);
+
+// ── 自包含的小工具：圆角矩形内外判定 + 可分离盒式模糊（只在本文件用）──
+static inline bool insideRoundRect(int x, int y, int rx0, int ry0, int rw, int rh, int r) {
+    if (x < rx0 || y < ry0 || x >= rx0 + rw || y >= ry0 + rh) return false;
+    if (r <= 0) return true;
+    int cx = x < rx0 + r ? rx0 + r : (x >= rx0 + rw - r ? rx0 + rw - 1 - r : x);
+    int cy = y < ry0 + r ? ry0 + r : (y >= ry0 + rh - r ? ry0 + rh - 1 - r : y);
+    if (cx == x && cy == y) return true;
+    int dx = x - cx, dy = y - cy;
+    return dx * dx + dy * dy <= r * r;
+}
+
+static void boxBlurARGB(std::vector<uint32_t>& px, int w, int h, int rad) {
+    if (rad < 1 || w <= 2 || h <= 2) return;
+    std::vector<uint32_t> tmp(px.size(), 0u);
+    // 水平
+    for (int y = 0; y < h; ++y) {
+        for (int x = 0; x < w; ++x) {
+            int a = 0, n = 0;
+            for (int k = -rad; k <= rad; ++k) {
+                int xx = x + k;
+                if (xx < 0 || xx >= w) continue;
+                a += (int)(px[(size_t)y * w + xx] >> 24);
+                ++n;
+            }
+            tmp[(size_t)y * w + x] = n ? ((uint32_t)(a / n) << 24) : 0u;
+        }
     }
+    // 垂直
+    for (int y = 0; y < h; ++y) {
+        for (int x = 0; x < w; ++x) {
+            int a = 0, n = 0;
+            for (int k = -rad; k <= rad; ++k) {
+                int yy = y + k;
+                if (yy < 0 || yy >= h) continue;
+                a += (int)(tmp[(size_t)yy * w + x] >> 24);
+                ++n;
+            }
+            px[(size_t)y * w + x] = n ? ((uint32_t)(a / n) << 24) : 0u;
+        }
+    }
+}
 
-    // ⑤ 左上角单独补一道更亮的高光（方向光的最强点，强化"迎光"）
-    {
-        uint32_t spec = dark ? 0x5AFFFFFFu : 0x44000000u;
-        int len = w_ / 3;
-        if (len > 4) {
-            // 用两段短描边近似左上圆角处的高光
-            strokeRoundRect(0, 0, w_, h_, radius, spec, 1.0f);
+// ★ 柔和外阴影：内容整体向内缩 margin 像素，外圈"铺一层再模糊"生成软投影
+//   （上一版用一圈圈描边，纯透明面板上会看成硬黑边；这里改成模糊，边缘自然过渡）
+void Surface::applyOuterShadow(int margin, int radius, bool dark) {
+    if (w_ <= 0 || h_ <= 0 || margin <= 0) return;
+    if (margin * 2 + 8 >= w_ || margin * 2 + 8 >= h_) return;
+
+    std::vector<uint32_t> content = px_;
+    const int iw = w_ - margin * 2, ih = h_ - margin * 2;
+
+    // ① 影子层：内框略微放大、下移 1px，铺一层低 alpha（深色主题更浓一点）
+    std::vector<uint32_t> sh((size_t)w_ * h_, 0u);
+    const uint32_t sa = (uint32_t)(dark ? 150 : 110) << 24;
+    const int sp = 2;
+    for (int y = 0; y < h_; ++y)
+        for (int x = 0; x < w_; ++x)
+            if (insideRoundRect(x, y, margin - sp, margin - sp + 1, iw + sp * 2, ih + sp * 2, radius + sp))
+                sh[(size_t)y * w_ + x] = sa;
+
+    // ② 两次盒式模糊 → 柔和渐变
+    boxBlurARGB(sh, w_, h_, margin / 2 > 0 ? margin / 2 : 2);
+    boxBlurARGB(sh, w_, h_, margin / 3 > 0 ? margin / 3 : 2);
+
+    // ③ 合成：先影子，再把缩进后的内容叠上去
+    px_.assign((size_t)w_ * h_, 0u);
+    for (size_t i = 0; i < px_.size(); ++i)
+        if (sh[i] >> 24) px_[i] = sh[i];
+    for (int y = 0; y < ih; ++y) {
+        for (int x = 0; x < iw; ++x) {
+            uint32_t src = content[(size_t)y * w_ + x];
+            if ((src >> 24) == 0) continue;
+            px_[(size_t)(y + margin) * w_ + (x + margin)] = src;
         }
     }
 }

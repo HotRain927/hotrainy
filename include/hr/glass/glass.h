@@ -55,6 +55,9 @@ public:
     // ★ 纯色平铺底：按百分比铺一层中性深色（0 = 什么都不铺，保持全透明），
     //   不抓屏、不模糊、不按背景明暗自适应。所有面板共用同一个百分比。
     void buildFlatPanel(int opacityPercent, int radius, bool dark);
+
+    // ★ 整幅内容向内缩 margin 像素，外圈画【柔和】投影（铺一层 + 盒式模糊，不是硬描边）
+    void applyOuterShadow(int margin, int radius, bool dark);
     // 玻璃卡片（设置窗口）：frost + 渐变 + 高光 + 一层薄雾，**不含**描边与圆角切边
     // veil：叠在色调之上的一层雾的 alpha（深色压黑 46 / 浅色提白 40），0 表示不叠
     bool buildCard(const Backdrop& bd, bool dark, int radius, int blur, int veil);

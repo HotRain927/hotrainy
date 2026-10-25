@@ -202,12 +202,16 @@ bool HoverPanel::mouseInside() const {
 void HoverPanel::rebuildBase() {
     if (w_ <= 0 || h_ <= 0) return;
     base_.create(w_, h_);
-    const int radius = px(14);
-    // ★ 全局面板透明度：所有面板共用一层纯色（0 = 纯透明，只剩图标与文字）。
-    //   不再抓屏、不再模糊、不再按壁纸明暗自适应 —— 见 glass.cpp buildFlatPanel。
+    const int radius = px(18);
+
+    // ★ 主体纯透明 + 细边框（边框与主体同一坐标系，四角都是圆角）
     const int op = cfg_ ? cfg_->panelOpacity : 0;
-    base_.buildFlatPanel(op, radius, dark_);   // 0 = 纯透明，边框始终保留
+    base_.buildFlatPanel(op, radius, dark_);
     base_.cutRoundCorners(radius);
+
+    // ★ 不再做"整体平移"：那个平移会把 cutRoundCorners 切好的三个圆角裁掉、
+    //   让边框与主体错位、还会让悬停高亮伸出面板之外。
+    //   外阴影改为后续在窗口外扩留白里画（未完成，见 docs/代码结构.md 待办）。
     baseValid_ = true;
 }
 
