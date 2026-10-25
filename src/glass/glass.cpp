@@ -514,20 +514,21 @@ void Surface::buildFlatPanel(int opacityPercent, int radius, bool dark) {
         else if (i == 3) a = dark ? 0x66u : 0x4Cu;   // 受光面
         else             a = dark ? 0x3Cu : 0x2Eu;   // 内侧收一点，避免"发白"
         uint32_t col = ((uint32_t)a << 24) | (litR << 16) | (litG << 8) | litB;
-        int x = i, y = i;
-        int w = w_ - 2 * i, h = h_ - 2 * i;
-        int r = radius - i; if (r < 1) r = 1;
+        // ★ 整体内缩 1px：否则边框画在画布最边缘，会被 cutRoundCorners 把四角弧线裁掉
+        int x = i + 1, y = i + 1;
+        int w = w_ - 2 * (i + 1), h = h_ - 2 * (i + 1);
+        int r = radius - i - 1; if (r < 1) r = 1;
         if (w > 2 && h > 2) strokeRoundRect(x, y, w, h, r, col, 1.0f);
     };
     for (int i = 0; i < rings; ++i) ring(i);
 
     // ③ 色散暗示：外冷内暖（各 1px，极淡）
-    strokeRoundRect(0, 0, w_, h_, radius, 0x0A60A0FFu, 1.0f);          // 最外：极淡冷
+    strokeRoundRect(1, 1, w_ - 2, h_ - 2, radius > 1 ? radius - 1 : 1, 0x0A60A0FFu, 1.0f);          // 最外：极淡冷
     {
         int ri = rings - 1;
         int w2 = w_ - 2 * ri, h2 = h_ - 2 * ri;
         int r2 = radius - ri; if (r2 < 1) r2 = 1;
-        if (w2 > 2 && h2 > 2) strokeRoundRect(ri, ri, w2, h2, r2, 0x0AFFB060u, 1.0f);   // 内圈：极淡暖
+        if (w2 > 2 && h2 > 2) strokeRoundRect(ri + 1, ri + 1, w2, h2, r2, 0x0AFFB060u, 1.0f);   // 内圈：极淡暖
     }
 
     // ④ 内侧光晕：斜面再向内一圈的柔光，模拟玻璃内部的厚度过渡
