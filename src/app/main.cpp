@@ -27,6 +27,7 @@
 #include "hr/app/app_context.h"
 #include "hr/settings/settings_wire.h"
 #include "hr/search/search_wire.h"
+#include "hr/island/island_wire.h"
 
 using namespace hr;
 
@@ -1562,7 +1563,7 @@ int main() {
     };
 
     // 岛台改了配置（分类切换、加快捷方式）→ 存盘
-    g_island.onConfigDirty = []() { saveConfig(g_cfg); };
+    islandWire();   // 岛台模块的接线（已搬到 src/island/island_wire.cpp）
 
     g_bar.onHoverTab = [](int idx, RECT bounds) { showPanelForTab(idx, bounds); };
     g_bar.onLeave = []() {
