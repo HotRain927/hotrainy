@@ -207,10 +207,14 @@ void HoverPanel::rebuildBase() {
     // ★ 主体纯透明 + 细边框（边框与主体同一坐标系，四角都是圆角）
     const int op = cfg_ ? cfg_->panelOpacity : 0;
     base_.buildFlatPanel(op, radius, dark_);
-    base_.cutRoundCorners(radius);
 
-    // ★ 不再做"整体平移"：那个平移会把 cutRoundCorners 切好的三个圆角裁掉、
-    //   让边框与主体错位、还会让悬停高亮伸出面板之外。
+    // ★ 不再 cutRoundCorners：那一刀是为"不透明底"准备的（把角上的底色切透明）。
+    //   现在主体本身就是全透明，只有边框在画，而边框走的是 SDF 圆角描边 ——
+    //   四角的弧由描边自己画出来。再切一刀只会把边框最外那 1px 的 alpha 削掉一半，
+    //   等于自己把刚画好的边削淡。
+
+    // ★ 不再做"整体平移"：那个平移会把四角圆角裁掉、让边框与主体错位、
+    //   还会让悬停高亮伸出面板之外。
     //   外阴影改为后续在窗口外扩留白里画（未完成，见 docs/代码结构.md 待办）。
     baseValid_ = true;
 }

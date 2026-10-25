@@ -263,17 +263,58 @@ void overlayVGrad(std::vector<uint32_t>& px, int w, int h, uint32_t tint, double
     }
 }
 
-// 圆角遮罩：cover ∈ [0,1] 的覆盖率（角部距离场抗锯齿）
+// 圆角遮罩：cover ∈ [0,1] 的覆盖率（到圆角矩形边界的有符号距离场）
+//
+// ⚠ 旧版把圆心算成 (r, r) / (w-r-1, h-r-1)，只有矩形足够"厚"时才成立。
+//   而边框是用 strokeRoundRect 画的，那里面每条边都是"又细又长"的矩形
+//   （上面那条 h=1）——圆心算出来落在矩形外面，四个角的 cover 直接变 0，
+//   于是圆角弧整段消失，只剩四条直边，四角变成"断口"。
+//   （实测证据：顶边从 x = 左+radius 才开始、左边从 y = 上+radius 才开始，
+//     中间那段弧一个像素都没有。）
+//   换成标准 SDF 后，任意 w/h/r 都正确。
 inline double cornerCover(int x, int y, int w, int h, int r) {
     if (r <= 0) return 1.0;
-    bool nearCorner = (x < r || x >= w - r) && (y < r || y >= h - r);
-    if (!nearCorner) return 1.0;
-    double cx = (x < r) ? r : w - r - 1;
-    double cy = (y < r) ? r : h - r - 1;
-    double dx = x - cx, dy = y - cy;
-    double dist = std::sqrt(dx * dx + dy * dy);
-    double cover = r - dist;
-    return cover < 0 ? 0.0 : (cover > 1 ? 1.0 : cover);
+    if (w <= 0 || h <= 0) return 0.0;
+    double rr = r;
+    const double lim = std::min(w, h) * 0.5;
+    if (rr > lim) rr = lim;
+    const double cx = w * 0.5, cy = h * 0.5;
+    double dx = std::fabs((x + 0.5) - cx) - (w * 0.5 - rr);
+    double dy = std::fabs((y + 0.5) - cy) - (h * 0.5 - rr);
+    if (dx < 0) dx = 0;
+    if (dy < 0) dy = 0;
+    const double d = std::sqrt(dx * dx + dy * dy) - rr;   // < 0 表示在内部
+    double cover = 0.5 - d;
+    if (cover <= 0) return 0.0;
+    if (cover >= 1) return 1.0;
+    return cover;
+}
+
+// 直通 alpha 的 source-over 合成（真·半透明）。
+//
+// ⚠ 旧代码走的是 blendColor(dst | 0xFF000000, color, a) | 0xFF000000：
+//   先把底的 alpha 强行当 255、再把结果的 alpha 强行写回 255。
+//   在"已经烘焙成不透明"的底上这没问题（RGB 结果完全一样），
+//   但面板主体现在是**纯透明**的 —— 于是
+//       hover 高亮 0x20FFFFFF 画上去 → 底色 0x000000 参与插值 → 0xFF202020，
+//   一个不透明的灰块。（用户看到的就是"不透明的浅灰"。）
+//   这里按标准 source-over 算，透明底就得到"半透明磨砂"。
+inline uint32_t blendSrcOverA(uint32_t dst, uint32_t color, double a) {
+    if (a <= 0) return dst;
+    if (a > 1) a = 1;
+    const uint32_t sa = (uint32_t)std::lround(((color >> 24) & 0xFF) * a);
+    if (sa == 0) return dst;
+    const uint32_t da = dst >> 24;
+    const uint32_t oa = sa + (da * (255 - sa) + 127) / 255;
+    if (oa == 0) return 0;
+    auto ch = [&](int shift) -> uint32_t {
+        const uint32_t sc = (color >> shift) & 0xFF;
+        const uint32_t dc = (dst >> shift) & 0xFF;
+        const uint32_t num = sc * sa * 255u + dc * da * (255u - sa);
+        const uint32_t den = oa * 255u;
+        return (num + den / 2) / den;
+    };
+    return (oa << 24) | (ch(16) << 16) | (ch(8) << 8) | ch(0);
 }
 
 }  // namespace
@@ -492,18 +533,18 @@ void Surface::buildFlatPanel(int opacityPercent, int radius, bool dark) {
     if (p > 100) p = 100;
     (void)p;   // ★ 主体纯透明：不铺任何底色、不雾化（面板透出背后画面）
 
-    // ═══ 细边框：透明面板上"看得见"，但不是硬黑边 ═══════════════════════════
-    //   ① 主边 1px（近白/近黑，alpha 中高）—— 让面板轮廓清楚
-    //   ② 内侧 1px 更亮的高光 —— 玻璃的镜面感
-    //   ③ 底部再压一道极淡暗边 —— 轻微立体感（厚斜面已去掉，厚了会显脏）
-    const int rr = radius > 1 ? radius - 2 : 1;
-    const uint32_t mainCol = dark ? 0x70FFFFFFu : 0x5A000000u;
-    const uint32_t hiCol   = dark ? 0x96FFFFFFu : 0x70000000u;
-    const uint32_t lowCol  = dark ? 0x26000000u : 0x1C000000u;
-    strokeRoundRect(2, 2, w_ - 4, h_ - 4, rr, mainCol, 1.0f);
+    // ═══ 边框：一圈"看得清"的细边 + 内侧一道更亮的高光（玻璃的厚度感）═══════
+    //   ① 最外 1px 暗轮廓 —— 壁纸是浅色时靠它把面板轮廓"描"出来
+    //   ② 内侧 1px 亮高光 —— 深色背景下最好看，就是玻璃的镜面感
+    //   两条都是真·圆角描边（SDF），四角有弧；一暗一亮叠起来，浅色/深色
+    //   背景上都看得清，而且不是一圈硬黑描边。
+    const uint32_t outlineCol = dark ? 0x54000000u : 0x44000000u;
+    const uint32_t hiCol      = dark ? 0x8CFFFFFFu : 0x62FFFFFFu;
+    strokeRoundRect(1, 1, w_ - 2, h_ - 2, radius, outlineCol, 1.0f);
     if (w_ > 8 && h_ > 8) {
-        strokeRoundRect(3, 3, w_ - 6, h_ - 6, rr > 1 ? rr - 1 : 1, hiCol, 1.0f);
-        strokeRoundRect(2, 3, w_ - 4, h_ - 4, rr, lowCol, 1.0f);
+        int rr = radius - 1;
+        if (rr < 1) rr = 1;
+        strokeRoundRect(2, 2, w_ - 4, h_ - 4, rr, hiCol, 1.0f);
     }
 }
 
@@ -774,7 +815,7 @@ void Surface::strokeCircle(int cx, int cy, int radius, uint32_t color, float wid
             if (cover <= 0) continue;
             if (cover > 1) cover = 1;
             uint32_t* p = &px_[(size_t)y * w_ + x];
-            *p = blendColor(*p | 0xFF000000u, color, sa * cover) | 0xFF000000u;
+            *p = blendSrcOverA(*p, color, sa * cover);
         }
     }
 }
@@ -805,7 +846,7 @@ void Surface::drawLine(int x1, int y1, int x2, int y2, uint32_t color, float wid
             if (cover <= 0) continue;
             if (cover > 1) cover = 1;
             uint32_t* p = &px_[(size_t)y * w_ + x];
-            *p = blendColor(*p | 0xFF000000u, color, sa * cover) | 0xFF000000u;
+            *p = blendSrcOverA(*p, color, sa * cover);
         }
     }
 }
@@ -820,8 +861,7 @@ void Surface::fillRect(int x, int y, int w, int h, uint32_t color) {
         for (int ix = 0; ix < w; ++ix) {
             int pxx = x + ix;
             if (pxx < 0 || pxx >= w_) continue;
-            px_[(size_t)py * w_ + pxx] =
-                blendColor(px_[(size_t)py * w_ + pxx] | 0xFF000000u, color, sa) | 0xFF000000u;
+            px_[(size_t)py * w_ + pxx] = blendSrcOverA(px_[(size_t)py * w_ + pxx], color, sa);
         }
     }
 }
@@ -840,8 +880,7 @@ void Surface::fillRoundRect(int x, int y, int w, int h, int r, uint32_t color) {
             double cover = cornerCover(ix, iy, w, h, r);
             if (cover <= 0) continue;
             px_[(size_t)py * w_ + pxx] =
-                blendColor(px_[(size_t)py * w_ + pxx] | 0xFF000000u, color, sa * cover) |
-                0xFF000000u;
+                blendSrcOverA(px_[(size_t)py * w_ + pxx], color, sa * cover);
         }
     }
 }
@@ -850,14 +889,51 @@ void Surface::drawCapsule(int x1, int y1, int x2, int y2, int radius, uint32_t c
     fillRoundRect(x1, y1, x2 - x1 + 1, y2 - y1 + 1, radius, color);
 }
 
+// 圆角矩形【描边】。
+//
+// ⚠ 旧实现是四条"填色细条"（fillRoundRect 各画一条边），靠 cornerCover 把
+//   两端修圆 —— 但细条的圆心算在矩形外，角的 cover 是 0，于是
+//   **四个角的弧完全没画出来**，边框成了四条中间断开、四角有缺口的直线。
+//   现在直接按"到圆角矩形路径的距离"描边：|d| <= width/2 的像素上色，
+//   边界给 1px 抗锯齿过渡，四角的弧是自然结果。
 void Surface::strokeRoundRect(int x, int y, int w, int h, int r, uint32_t color, float width) {
+    if (w <= 0 || h <= 0) return;
     int a = aOf(color);
     if (a <= 0) return;
-    int t = std::max(1, (int)std::lround(width));
-    fillRoundRect(x, y, w, t, r, color);
-    fillRoundRect(x, y + h - t, w, t, r, color);
-    fillRoundRect(x, y, t, h, r, color);
-    fillRoundRect(x + w - t, y, t, h, r, color);
+    const double sa = a / 255.0;
+    const double half = std::max(0.5, (double)width * 0.5);
+
+    double rr = r;
+    const double lim = std::min(w, h) * 0.5;
+    if (rr < 0) rr = 0;
+    if (rr > lim) rr = lim;
+
+    const double cx = x + w * 0.5, cy = y + h * 0.5;
+    const double ex = w * 0.5 - rr, ey = h * 0.5 - rr;
+
+    int x0 = (int)std::floor(cx - ex - rr - half - 1);
+    int x1 = (int)std::ceil(cx + ex + rr + half + 1);
+    int y0 = (int)std::floor(cy - ey - rr - half - 1);
+    int y1 = (int)std::ceil(cy + ey + rr + half + 1);
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 > w_ - 1) x1 = w_ - 1;
+    if (y1 > h_ - 1) y1 = h_ - 1;
+
+    for (int py = y0; py <= y1; ++py) {
+        for (int pxx = x0; pxx <= x1; ++pxx) {
+            double dx = std::fabs((pxx + 0.5) - cx) - ex;
+            double dy = std::fabs((py + 0.5) - cy) - ey;
+            if (dx < 0) dx = 0;
+            if (dy < 0) dy = 0;
+            const double d = std::sqrt(dx * dx + dy * dy) - rr;
+            double cover = half + 0.5 - std::fabs(d);
+            if (cover <= 0) continue;
+            if (cover > 1) cover = 1;
+            px_[(size_t)py * w_ + pxx] =
+                blendSrcOverA(px_[(size_t)py * w_ + pxx], color, sa * cover);
+        }
+    }
 }
 
 void Surface::drawText(const wchar_t* text, RECT rc, float sizePx, uint32_t color, int align,
