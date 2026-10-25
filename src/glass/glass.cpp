@@ -544,7 +544,7 @@ void Surface::buildFlatPanel(int opacityPercent, int radius, bool dark) {
     //   现在雾只铺在主体上，文字/图标/边框保持不透明。
     if (p > 0) {
         const uint32_t fogRgb = dark ? 0x00101216u : 0x00F1F3F7u;   // 只取 RGB
-        const int maxA = dark ? 0x8Cu : 0x74;                       // 100% 时的雾浓度
+        const int maxA = dark ? 0xC8u : 0xA6u;                       // 100% 时的雾浓度（用户：原来太弱）
         const uint32_t col = ((uint32_t)(maxA * p / 100) << 24) | fogRgb;
         fillRoundRect(0, 0, w_, h_, radius, col);
     }

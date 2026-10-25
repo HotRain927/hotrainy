@@ -472,11 +472,15 @@ void SettingsWindow::buildGlass() {
 
     // ★ 外阴影：与悬停面板同一套 —— 画布比内容大出四周留白，
     //   影子只画在内容矩形之外，内容坐标不动。
+    // ⚠ 影子只跟尺寸/深浅有关，跟透明度无关 —— 拖透明度滑块时别重算它：
+    //   那是一整张逐像素距离场，白算会让拖动发涩。
     const int s = shadowInset();
-    shadow_.create(winW_ + s * 2, winH_ + s * 2);
-    shadow_.clear();
-    RECT content = {s, s, s + winW_, s + winH_};
-    shadow_.applyOuterShadow(content, radius, dark_, px(2));
+    if (shadow_.width() != winW_ + s * 2 || shadow_.height() != winH_ + s * 2) {
+        shadow_.create(winW_ + s * 2, winH_ + s * 2);
+        shadow_.clear();
+        RECT content = {s, s, s + winW_, s + winH_};
+        shadow_.applyOuterShadow(content, radius, dark_, px(2));
+    }
 }
 
 void SettingsWindow::rebuildGlassOffscreen() {
@@ -991,6 +995,10 @@ void SettingsWindow::redraw() {
             logf("settings: 面板透明度 -> %d", v);
             saveConfig(*cfg_);
             if (onSettingChanged) onSettingChanged("panel_opacity");
+            // ★ 立刻按新透明度重烘焙玻璃底再出帧。
+            //   雾是烘焙在 glass_ 里的，只 redraw() 的话它还是旧浓度 ——
+            //   用户："拖动条之后的瞬间就要把雾化效果刷新出来"。
+            buildGlass();
             redraw();
         });
     });
