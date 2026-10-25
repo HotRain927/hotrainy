@@ -1265,6 +1265,24 @@ void SettingsWindow::recordKey(WPARAM vk) {
     // 只按住了修饰键 → 继续等
     if (vk == VK_CONTROL || vk == VK_MENU || vk == VK_SHIFT || vk == VK_LWIN || vk == VK_RWIN) return;
 
+    // ★ 中文输入法激活时，系统送来的是 VK_PROCESSKEY(0xE5) —— 真实按键只有输入法知道。
+    //   不处理的话会把 "0xE5" 当成一个快捷键记下来（一个永远不会触发的键），
+    //   用户看到的就是"改了没反应/一直被占用"。
+    //   ImmGetVirtualKey 就是把真实按键问回来的官方办法；动态取，不新增链接依赖。
+    if (vk == VK_PROCESSKEY) {
+        using ImmGetVirtualKeyFn = UINT(WINAPI*)(HWND);
+        static ImmGetVirtualKeyFn getReal = []() -> ImmGetVirtualKeyFn {
+            HMODULE imm = ::LoadLibraryW(L"imm32.dll");
+            return imm ? (ImmGetVirtualKeyFn)::GetProcAddress(imm, "ImmGetVirtualKey") : nullptr;
+        }();
+        const UINT real = getReal ? getReal(hwnd_) : 0;
+        if (real == 0 || real == VK_PROCESSKEY) {
+            logf("settings: 快捷键录制：输入法吃掉了这个键，且问不回真实按键 → 忽略");
+            return;
+        }
+        vk = real;
+    }
+
     UINT mods = 0;
     if (GetAsyncKeyState(VK_CONTROL) & 0x8000) mods |= MOD_CONTROL;
     if (GetAsyncKeyState(VK_MENU) & 0x8000) mods |= MOD_ALT;

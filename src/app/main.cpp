@@ -836,8 +836,15 @@ bool registerSearchHotkey() {
     }
     g_searchHotkeyOk =
         RegisterHotKey(g_msgWnd, kHotkeySearch, mods | MOD_NOREPEAT, vk) != FALSE;
-    logf("hotkey[搜索] %s: %s", g_cfg.searchHotkey.c_str(),
-         g_searchHotkeyOk ? "已注册" : "注册失败（可能被占用）");
+    // ★ 失败时把 Windows 错误码也写下来：
+    //   1409 = ERROR_HOTKEY_ALREADY_REGISTERED（被别的窗口占了）；
+    //   其它值说明是参数/解析层面的问题 —— 只写"可能被占用"是分辨不出来的。
+    const DWORD hkErr = g_searchHotkeyOk ? 0 : ::GetLastError();
+    logf("hotkey[搜索] %s (mods=0x%X vk=0x%X): %s%s", g_cfg.searchHotkey.c_str(),
+         (unsigned)mods, (unsigned)vk,
+         g_searchHotkeyOk ? "已注册" : "注册失败",
+         g_searchHotkeyOk ? "" : (hkErr == 1409 ? " error=1409 已被别的窗口注册" : " error=?"));
+    if (!g_searchHotkeyOk) logf("hotkey[搜索]: GetLastError=%lu", (unsigned long)hkErr);
     return g_searchHotkeyOk;
 }
 

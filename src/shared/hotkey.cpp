@@ -2,6 +2,7 @@
 #include "hr/shared/hotkey.h"
 
 #include <cstdio>
+#include <cstdlib>
 #include <cwchar>
 #include <map>
 
@@ -117,6 +118,14 @@ bool parseHotkey(const std::string& spec, UINT& mods, UINT& vk) {
                 mods |= MOD_SHIFT;
             } else if (low == "win" || low == "super" || low == "meta") {
                 mods |= MOD_WIN;
+            } else if (low.size() > 2 && low[0] == '0' && low[1] == 'x') {
+                // ★ vkName() 对"表外"的键返回 "0xXX"（小键盘、媒体键、某些 IME 键…）。
+                //   这里必须认它 —— 否则「录音器写出的字符串」解析器读不懂，
+                //   表现就是改快捷键**永远提示已被占用**（用户报的）。
+                const unsigned long v = std::strtoul(low.c_str() + 2, nullptr, 16);
+                if (v == 0 || v > 0xFF) return false;
+                vk = (UINT)v;
+                hasVk = true;
             } else {
                 auto it = tbl.find(low);
                 if (it == tbl.end()) return false;
@@ -150,6 +159,13 @@ std::string formatHotkey(UINT mods, UINT vk) {
         WideCharToMultiByte(CP_UTF8, 0, name.c_str(), (int)name.size(), &utf8[0], need, nullptr,
                             nullptr);
     }
+    // ★ 这里原来直接 out += utf8 —— 少了它前面那个 '+'。
+    //
+    //   于是 "Ctrl+Alt+Space" 被写成 "Ctrl+AltSpace"；
+    //   parseHotkey 按 '+' 切分只拿到 "altspace"，查表失败 -> 解析失败 ->
+    //   注册必然失败 -> 设置界面**永远显示"已被占用"**（用户报的 bug）。
+    //   单元测试（把 1..0xFF 全跑一遍）一下就把它抓出来了。
+    if (!out.empty() && !utf8.empty()) out += "+";
     out += utf8;
     return out;
 }
