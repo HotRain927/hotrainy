@@ -250,6 +250,14 @@ void BarWindow::setActive(int idx) {
 void BarWindow::setDark(bool dark) {
     if (dark_ == dark) return;
     dark_ = dark;
+    // ★ 文字颜色必须跟着「文字颜色」设置走：取 theme.cpp 里那一套全局玻璃调色板
+    //   （面板、岛台取的是同一个来源）。
+    //   ⚠ 之前 textMain_ / textDim_ 是成员默认值（写死 0xFFF5F5F7 / 0xFFC2C4CC，
+    //     正好等于深色那套），setDark() 没更新过它们 —— 设置里选「深色文字」
+    //     （dark_ = false）时，标签栏还在画白字，跟设置对不上。
+    const GlassPalette& p = glassPalette(dark_);
+    textMain_ = p.text;
+    textDim_ = p.textDim;
     rebuildBase();
     redraw();
 }
@@ -340,28 +348,40 @@ void BarWindow::redraw() {
     bool glass = cfg_ && glassAppearanceOn(*cfg_);
     const GlassPalette& p = glassPalette(dark_);
     const Theme& th = themeByName(cfg_->themeColor);
-    int padY = px(4);
 
     if (glass) {
-        // 胶囊分两种（对照 tab_bar.py:335）：激活标签用实色强胶囊，鼠标停着的标签用淡胶囊。
-        // 以前只画 active_ 一种，悬停时又顺手 setActive —— 鼠标一走胶囊就留在那儿褪不掉。
-        auto capsuleFor = [&](int idx, uint32_t color) {
-            if (idx < 0 || idx >= (int)cfg_->tabs.size() || idx >= (int)tabRects_.size()) return;
-            int cx = idx * tabW_ + tabW_ / 2;
-            int labelW = measureW(cfg_->tabs[idx].name, pt(10));
-            int cw = labelW + px(26);
-            int x1 = std::max(idx * tabW_ + px(6), cx - cw / 2);
-            int x2 = std::min((idx + 1) * tabW_ - px(6), cx + cw / 2);
-            int r = (height_ - padY * 2) / 2;
-            frame_.drawCapsule(x1, padY, x2, height_ - padY, r, color);
-        };
-        if (hover_ >= 0) capsuleFor(hover_, p.capsule);   // 只留淡色悬停胶囊
-        // 右侧图标悬停胶囊
-        if (iconHover_ >= 0) {
-            int ix1 = iconsStart_ + iconHover_ * iconW_;
-            int ix2 = ix1 + iconW_;
-            int r = (height_ - padY * 2) / 2;
-            frame_.drawCapsule(ix1 + px(3), padY, ix2 - px(3), height_ - padY, r, p.capsule);
+        // ★ 每个标签各自一个"类矩形圆角"的玻璃边 —— 走的是和面板边框同一个
+        //   strokeGlassEdge（外圈 1px 暗轮廓 + 内侧 1px 亮高光），所以"一个感觉"。
+        //
+        //   三条要求（用户口径）：
+        //     ① 每个标签各自一圈，标签之间要有各自的框 —— 不是糊成一整条胶囊；
+        //     ② 框要**一直显示**，不是鼠标移上去才出现 → 常态就用 strength 1.0
+        //        （和面板同档），只是悬停/激活再调亮；
+        //     ③ 框要**撑满本来的标签** → 横向铺满整个标签格，纵向只留 1px，
+        //        不再是缩在中间的小框。相邻标签之间自然剩下 2~3px 的缝，
+        //        看起来就是一条分隔线。
+        const int tabR = px(4);          // 圆角给小：类矩形，不是胶囊
+        const int boxY = 1, boxH = height_ - 2;   // 上/下各留 1px，其余撑满
+        for (int i = 0; i < (int)tabRects_.size(); ++i) {
+            const RECT& r = tabRects_[i];
+            const int bx = r.left, bw = r.right - r.left;
+            if (bw <= 8 || boxH <= 8) continue;
+            const bool hov = (i == hover_), act = (i == active_);
+            if (hov || act) {
+                frame_.fillRoundRect(bx + 2, boxY + 1, bw - 4, boxH - 2, tabR,
+                                     hov ? p.capsule : p.capsuleStrong);
+            }
+            frame_.strokeGlassEdge(bx, boxY, bw, boxH, tabR, dark_,
+                                   hov ? 1.5 : (act ? 1.25 : 1.0));
+        }
+        // 右侧每个小图标同款：各自一个撑满自己那一格的类矩形圆角框（一直显示）
+        for (int i = 0; i < ICON_COUNT; ++i) {
+            const int ix1 = iconsStart_ + i * iconW_;
+            const int bx = ix1, bw = iconW_;
+            if (bw <= 8 || boxH <= 8) continue;
+            const bool hov = (i == iconHover_);
+            if (hov) frame_.fillRoundRect(bx + 2, boxY + 1, bw - 4, boxH - 2, tabR, p.capsule);
+            frame_.strokeGlassEdge(bx, boxY, bw, boxH, tabR, dark_, hov ? 1.5 : 1.0);
         }
         frame_.addHairline(dark_);
     } else {

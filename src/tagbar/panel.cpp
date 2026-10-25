@@ -57,9 +57,24 @@ void HoverPanel::destroy() {
     hwnd_ = nullptr;
 }
 
+// ★ 文字颜色必须跟着设置走。
+//
+//   这里取的是 theme.cpp 里那一套全局玻璃调色板（深/浅各一套），
+//   和岛台、标签栏取的是同一个来源。
+//
+//   ⚠ 之前 textMain_ / textDim_ 是成员默认值（写死 0xFFF5F5F7 / 0xFFC2C4CC，正好等于
+//     深色那套），setDark() 根本没更新它们 —— 于是设置里选了「深色文字」
+//     （dark_ = false）时，面板和标签栏还是画白字，跟设置对不上。
+void HoverPanel::applyTextColors() {
+    const GlassPalette& p = glassPalette(dark_);
+    textMain_ = p.text;
+    textDim_ = p.textDim;
+}
+
 void HoverPanel::setDark(bool dark) {
     if (dark_ == dark) return;
     dark_ = dark;
+    applyTextColors();
     baseValid_ = false;
     if (visible_) rebuildBase(), redraw();
 }
@@ -319,12 +334,17 @@ void HoverPanel::redraw() {
                 int iconY = (y1 + y2) / 2;
 
                 if (i == hoverRow_) {
-                    if (glass) {
-                        // 对照 Python：普通矩形（不是圆角），颜色是成品平均色的实色
-                        frame_.fillRect(rowX1_, y1 + px(2), rowX2_ - rowX1_,
-                                        (y2 - px(2)) - (y1 + px(2)), rowHoverColor_);
-                    } else {
-                        frame_.fillRect(rowX1_, y1, rowX2_ - rowX1_, y2 - y1, th.hover);
+                    // ★ 悬停的那一条：半透明磨砂底 + 一圈"亮起来"的玻璃边。
+                    //   边框是必须的 —— 只铺底的话，浅色壁纸上 12% 的白根本看不出来；
+                    //   strokeGlassEdge 是一暗一亮两道，浅底/深底都看得清，
+                    //   而且和面板、标签用的是同一套边，观感一致。
+                    const int rx = rowX1_, ry = y1 + px(2);
+                    const int rw = rowX2_ - rowX1_, rh = (y2 - px(2)) - ry;
+                    const int rr = px(5);   // 圆角给小：类矩形，不是胶囊
+                    if (rw > 8 && rh > 8) {
+                        frame_.fillRoundRect(rx, ry, rw, rh, rr,
+                                             glass ? rowHoverColor_ : th.hover);
+                        frame_.strokeGlassEdge(rx, ry, rw, rh, rr, dark_, 1.6);
                     }
                 } else if (!glass && i % 2 == 0) {
                     frame_.fillRect(rowX1_, y1, rowX2_ - rowX1_, y2 - y1, th.active);
@@ -369,6 +389,15 @@ void HoverPanel::redraw() {
             }
         }
     }
+    // ★ 让整块面板都能收鼠标：分层窗口的命中测试只看 alpha，而面板主体是纯透明的
+    //   （alpha=0）—— 不抬 alpha 的话，面板里点一下会直接穿透到背后的窗口，
+    //   而且连 WM_MOUSEMOVE 都收不到（悬停高亮也就不会亮）。
+    //   实测：面板开着时 WindowFromPoint(面板内部) 返回的是背后的浏览器窗口，
+    //   只有边框和阴影那几圈返回 HotrainyPanel。抬到 alpha=1 后恢复正常，
+    //   1/255 ≈ 0.4% 的不透明度，肉眼看不出来。
+    RECT contentRc = {0, 0, w_, h_};
+    frame_.ensureHitTestableArea(contentRc, cornerRadius());
+
     // ★ 内容 + 外阴影合成到"带留白"的画布，再整幅提交。
     //   窗口落点要向左上各让出留白（dst = 内容位置 - 留白），
     //   因此鼠标消息的客户区坐标也要减掉同样的留白（见 handle）。

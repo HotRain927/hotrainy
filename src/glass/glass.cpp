@@ -538,14 +538,10 @@ void Surface::buildFlatPanel(int opacityPercent, int radius, bool dark) {
     //   ② 内侧 1px 亮高光 —— 深色背景下最好看，就是玻璃的镜面感
     //   两条都是真·圆角描边（SDF），四角有弧；一暗一亮叠起来，浅色/深色
     //   背景上都看得清，而且不是一圈硬黑描边。
-    const uint32_t outlineCol = dark ? 0x54000000u : 0x44000000u;
-    const uint32_t hiCol      = dark ? 0x8CFFFFFFu : 0x62FFFFFFu;
-    strokeRoundRect(1, 1, w_ - 2, h_ - 2, radius, outlineCol, 1.0f);
-    if (w_ > 8 && h_ > 8) {
-        int rr = radius - 1;
-        if (rr < 1) rr = 1;
-        strokeRoundRect(2, 2, w_ - 4, h_ - 4, rr, hiCol, 1.0f);
-    }
+    // 边框统一交给 strokeGlassEdge —— 标签栏的每个标签、右侧每个小图标、
+    // 面板里悬停的那条快捷方式走的都是同一个函数，观感天然一致。
+    // 这里传的是整块面板的外框：轮廓落在第 1 圈、高光落在第 2 圈。
+    strokeGlassEdge(0, 0, w_, h_, radius, dark, 1.0);
 }
 
 
@@ -782,6 +778,22 @@ void Surface::ensureHitTestableEdges() {
     for (int y = 0; y < h_; ++y) { bump(0, y); bump(w_ - 1, y); }
 }
 
+// ★ 让整块面板都能收鼠标（见 glass.h 的说明）。
+void Surface::ensureHitTestableArea(const RECT& rc, int radius) {
+    if (w_ <= 0 || h_ <= 0) return;
+    int x0 = std::max(0, (int)rc.left), y0 = std::max(0, (int)rc.top);
+    int x1 = std::min(w_ - 1, (int)rc.right - 1), y1 = std::min(h_ - 1, (int)rc.bottom - 1);
+    const int rw = x1 - x0 + 1, rh = y1 - y0 + 1;
+    if (rw <= 0 || rh <= 0) return;
+    for (int y = y0; y <= y1; ++y) {
+        for (int x = x0; x <= x1; ++x) {
+            if (cornerCover(x - x0, y - y0, rw, rh, radius) < 0.5) continue;   // 圆角外不动
+            uint32_t& c = px_[(size_t)y * w_ + x];
+            if ((c >> 24) == 0) c = 0x01000000u;   // 只抬 alpha，RGB 留 0 → 看不出来
+        }
+    }
+}
+
 void Surface::strokeCircle(int cx, int cy, int radius, uint32_t color, float width) {
 
     int a = aOf(color);
@@ -919,6 +931,36 @@ void Surface::strokeRoundRect(int x, int y, int w, int h, int r, uint32_t color,
             px_[(size_t)py * w_ + pxx] =
                 blendSrcOverA(px_[(size_t)py * w_ + pxx], color, sa * cover);
         }
+    }
+}
+
+// ★ 全界面统一的"玻璃边"：外圈 1px 暗轮廓 + 内侧 1px 亮高光。
+//
+//   暗轮廓负责在**浅色**壁纸上把形状描出来，亮高光负责在**深色**背景上有玻璃感 ——
+//   一暗一亮叠在一起，两种背景都看得清，而且不是一圈硬黑描边。
+//   （这就是面板边框那一套；标签、右侧图标、悬停行都复用它，只是圆角给小。）
+//
+//   strength 把两条边的 alpha 一起放大/缩小：常态淡一点（标签之间只是"分开"），
+//   悬停/激活时调大 → 那一圈的边就"亮起来"。
+void Surface::strokeGlassEdge(int x, int y, int w, int h, int radius, bool dark, double strength) {
+    if (w <= 4 || h <= 4) return;
+    if (strength <= 0.0) return;
+
+    auto scaled = [strength](uint32_t c) -> uint32_t {
+        long a = std::lround((double)aOf(c) * strength);
+        if (a < 0) a = 0;
+        if (a > 255) a = 255;
+        return (c & 0x00FFFFFFu) | ((uint32_t)a << 24);
+    };
+
+    const uint32_t outlineCol = dark ? 0x54000000u : 0x44000000u;
+    const uint32_t hiCol      = dark ? 0x8CFFFFFFu : 0x62FFFFFFu;
+
+    strokeRoundRect(x + 1, y + 1, w - 2, h - 2, radius, scaled(outlineCol), 1.0f);
+    if (w > 8 && h > 8) {
+        int rr = radius - 1;
+        if (rr < 1) rr = 1;
+        strokeRoundRect(x + 2, y + 2, w - 4, h - 4, rr, scaled(hiCol), 1.0f);
     }
 }
 
@@ -1069,13 +1111,32 @@ void Surface::drawBitmapFaded(HBITMAP bmp, int x, int y, int size, double opacit
 
             if (a <= 0.5) continue;
 
+            // ★ 源是预乘 BGRA（IShellItemImageFactory 给的就是预乘），目标是直通 alpha 的
+            //   ARGB —— 按 source-over 算，并且**必须把结果的 alpha 一起写回去**。
+            //
+            //   ⚠ 旧代码是 dst = (dst & 0xFF000000) | rgb：只改 RGB、保留底原来的 alpha。
+            //     在不透明玻璃底上这没问题（RGB 结果完全一样），但面板主体是纯透明的
+            //     （alpha = 0）→ 图标被"画"上去了却仍然全透明 —— 一个快捷方式图标都看不见。
+            //   ⚠ 顺带修：opacity < 1 时预乘色也要一起乘 opacity，否则反预乘会偏亮。
+            const double as = a / 255.0;
             uint32_t& dst = px_[(size_t)py * w_ + px];
-            double inv = 1.0 - a / 255.0;
-            double nr = r + rOf(dst) * inv;
-            double ng = g + gOf(dst) * inv;
-            double nb = b + bOf(dst) * inv;
-            dst = (dst & 0xFF000000u) | ((uint32_t)std::min(255.0, nr) << 16) |
-                  ((uint32_t)std::min(255.0, ng) << 8) | (uint32_t)std::min(255.0, nb);
+            const double ad = aOf(dst) / 255.0;
+            const double ao = as + ad * (1.0 - as);
+            if (ao <= 0.0001) continue;
+            const double pr = r * opacity, pg = g * opacity, pb = b * opacity;
+            const double sr = as > 0 ? pr / as : 0.0;
+            const double sg = as > 0 ? pg / as : 0.0;
+            const double sb = as > 0 ? pb / as : 0.0;
+            const double dr = rOf(dst) / 255.0, dg = gOf(dst) / 255.0, db = bOf(dst) / 255.0;
+            const double k = ad * (1.0 - as);
+            auto to255 = [](double v) -> uint32_t {
+                long q = std::lround(v * 255.0);
+                if (q < 0) q = 0;
+                if (q > 255) q = 255;
+                return (uint32_t)q;
+            };
+            dst = (to255(ao) << 24) | (to255((sr * as + dr * k) / ao) << 16) |
+                  (to255((sg * as + dg * k) / ao) << 8) | to255((sb * as + db * k) / ao);
         }
     }
 }

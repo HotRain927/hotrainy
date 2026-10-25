@@ -87,6 +87,16 @@ public:
     void fillRoundRect(int x, int y, int w, int h, int r, uint32_t color);
     void fillRect(int x, int y, int w, int h, uint32_t color);
     void strokeRoundRect(int x, int y, int w, int h, int r, uint32_t color, float width);
+
+    // ★ 面板同款"玻璃边"：外圈 1px 暗轮廓 + 内侧 1px 亮高光，四角都是圆角。
+    //
+    //   全界面同一套边 —— 面板、标签栏的每个标签、右侧每个小图标、
+    //   面板里悬停的那条快捷方式，都走这里，所以观感天然一致。
+    //   (x,y,w,h) 是【外框】：轮廓画在第 1 圈、高光画在第 2 圈。
+    //   radius 给小时更像矩形（标签/图标用），给大时就是面板那种圆角。
+    //   strength：整体亮度系数。1.0 = 常态；>1 让这一圈的边"亮起来"（悬停/激活）。
+    void strokeGlassEdge(int x, int y, int w, int h, int radius, bool dark, double strength = 1.0);
+
     void cutRoundCorners(int radius);      // 圆角外置为全透明
 
     // 把最外圈像素的 alpha 抬到至少 1。
@@ -101,6 +111,17 @@ public:
     //   但系统就认那里有窗口了。只处理最外圈，
     //   内部维持原样，否则圆角区会浮出一层方形轮廓。
     void ensureHitTestableEdges();
+
+    // ★ 把圆角矩形 rc 内部的 alpha 抬到至少 1（只动 alpha，RGB 保持 0 → 肉眼不可见）。
+    //
+    // ⚠ 为什么需要：分层窗口的命中测试**只看 alpha**。面板主体是纯透明的
+    //   （alpha=0），于是整块面板对鼠标是"空的" —— 鼠标消息直接穿透到背后的窗口，
+    //   表现就是"面板里的快捷方式点不到"，而且悬停高亮也不会亮
+    //   （因为连 WM_MOUSEMOVE 都收不到）。
+    //   实测证据：面板开着时 WindowFromPoint(面板内部) 返回的是背后的浏览器窗口，
+    //   只有边框和阴影那几圈（alpha>0）才返回 HotrainyPanel。
+    //   抬到 1（1/255 ≈ 0.4% 不透明度）肉眼看不出来，但窗口就开始收鼠标了。
+    void ensureHitTestableArea(const RECT& rc, int radius);
 
     // 设置玻璃的不透明度（0.0 = 全透，1.0 = 完全不透明）。
     //
