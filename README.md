@@ -53,7 +53,7 @@
 
 ### 方式一：单文件安装程序（推荐）
 
-1. 下载 Releases 里的 **`hotrainy_setup.zip`**，解压得到 `hotrainy_installer.exe`。
+1. 下载 [Releases](https://github.com/HotRain927/hotrainy/releases) 里的 **`hotrainy_setup.zip`**，解压得到 `hotrainy_installer.exe`。
 2. 双击它 → 弹出系统文件夹选择框 → **选择安装位置** → 确认。
 3. 安装程序会把程序文件解压到你选的文件夹，并创建**桌面快捷方式**和**开始菜单项**。
 4. 装完可以选择立即启动。
@@ -126,6 +126,15 @@
 
 ---
 
+## 获取源码
+
+```bash
+git clone https://github.com/HotRain927/hotrainy.git
+cd hotrainy
+```
+
+仓库是**自洽**的：唯一的外部依赖（手写的迷你 JSON 解析器 `tbg::json`）已经 vendored 在
+`third_party/tbg/` 里，clone 下来直接就能构建，不需要子模块。
 ## 从源码构建
 
 ### 环境要求

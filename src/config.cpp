@@ -6,7 +6,7 @@
 
 #include "hr/common.h"
 // 复用项目里同一份手写 JSON（不引入第三方库）
-#include "../../tbg/include/tbg/json.h"
+#include "../third_party/tbg/include/tbg/json.h"
 
 namespace hr {
 

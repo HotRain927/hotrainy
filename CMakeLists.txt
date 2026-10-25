@@ -159,14 +159,14 @@ file(GLOB HR_TB_SOURCES "${CMAKE_SOURCE_DIR}/src/tb/*.cpp")
 file(GLOB HR_XAML_SOURCES "${CMAKE_SOURCE_DIR}/src/tb/xaml/*.cpp")
 list(APPEND HR_SOURCES ${HR_TB_SOURCES} ${HR_XAML_SOURCES})
 # json.cpp 来自 tbg 子工程
-list(APPEND HR_SOURCES "${CMAKE_SOURCE_DIR}/../tbg/src/json.cpp")
+list(APPEND HR_SOURCES "${CMAKE_SOURCE_DIR}/third_party/tbg/src/json.cpp")
 
 add_executable(hotrainy WIN32 ${HR_SOURCES}
     res/hotrainy.rc)
 hr_enable_debug_info(hotrainy)
 target_include_directories(hotrainy PRIVATE
     "${CMAKE_SOURCE_DIR}/include"
-    "${CMAKE_SOURCE_DIR}/../tbg/include"
+    "${CMAKE_SOURCE_DIR}/third_party/tbg/include"
 )
 if(CPPWINRT_INCLUDE_DIR)
     target_include_directories(hotrainy PRIVATE "${CPPWINRT_INCLUDE_DIR}")
