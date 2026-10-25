@@ -1,5 +1,6 @@
 // hr/search.cpp — 玻璃搜索窗 + 本地索引
 // 逐块对照 ui/search_window.py 与 core/search_service.py
+#include "hr/search/pinyin.h"
 #include "hr/search/search.h"
 
 #include <dwmapi.h>
@@ -16,6 +17,7 @@
 #include <ctime>
 #include <cwctype>
 #include <mutex>
+#include <unordered_map>
 #include <string>
 #include <thread>
 #include <unordered_set>
@@ -449,8 +451,89 @@ bool isSubseq(const std::wstring& q, const std::wstring& s) {
     return true;
 }
 
+// ── 拼音搜索支持 ───────────────────────────────────────────────
+//
+// 用户："搜索中文的文件的时候可以用拼音搜，可以全拼也可以拼音首字母"。
+// 「工作报表.xlsx」应当能被 gongzuobaobiao、gzb、zuobao 都搜到。
+//
+// ⚠ 为什么要有缓存：runQuery() 会对索引里的**每一条**逐条调 scoreOf()
+//   （打分就是过滤，没有额外的预筛）。每敲一个键就重算几万条名字的拼音会明显卡，
+//   而名字是不变的 —— 所以按名字缓存一份。
+//   ⚠ 按**值**返回，不要把 map 里的引用交给调用方：
+//     两个窗口（岛台内嵌搜索 / 独立搜索窗）可能同时查询，
+//     map 被另一个线程 clear 掉时引用就悬空了。
+std::mutex g_pyMtx;
+std::unordered_map<std::wstring, PyForms> g_pyCache;
+
+PyForms pyFormsCached(const std::wstring& name) {
+    {
+        std::lock_guard<std::mutex> lk(g_pyMtx);
+        auto it = g_pyCache.find(name);
+        if (it != g_pyCache.end()) return it->second;
+    }
+    PyForms f;
+    pinyinForms(name, f);
+    std::lock_guard<std::mutex> lk(g_pyMtx);
+    if (g_pyCache.size() > 80000) g_pyCache.clear();   // 兜底：别无限长
+    g_pyCache.emplace(name, f);
+    return f;
+}
+
+bool hasHanChar(const std::wstring& s) {
+    for (wchar_t c : s) {
+        if (c >= 0x4E00 && c <= 0x9FFF) return true;
+    }
+    return false;
+}
+
+// 查询串 → 纯 ASCII 小写；含任何非 ASCII 字符就返回空串（调用方据此跳过拼音匹配）
+std::string asciiQuery(const std::wstring& q) {
+    std::string s;
+    s.reserve(q.size());
+    for (wchar_t c : q) {
+        if (c < 0x20 || c > 0x7E) return std::string();
+        s.push_back((char)c);
+    }
+    return s;
+}
+
+bool isSubseqAscii(const std::string& q, const std::string& s) {
+    size_t pos = 0;
+    for (char ch : q) {
+        const size_t j = s.find(ch, pos);
+        if (j == std::string::npos) return false;
+        pos = j + 1;
+    }
+    return true;
+}
+
+// 拼音打分：全拼相等 > 全拼前缀 > 全拼子串 > 首字母子序列。
+// 分数压在字面匹配（700+）之下、模糊匹配（480）之上 —— 拼音是"二等公民"，
+// 真的字面命中永远排在前面。
+int scorePinyin(const std::string& qa, const PyForms& py) {
+    if (qa.empty() || py.full.empty()) return 0;
+    if (py.full == qa) return 880;
+    if (py.full.size() >= qa.size() && py.full.compare(0, qa.size(), qa) == 0) {
+        return 860 - (int)std::min<size_t>(py.full.size() - qa.size(), 60);
+    }
+    const size_t i = py.full.find(qa);
+    if (i != std::string::npos) return 660 - (int)i * 4;
+    // 多音字次读音：银(行) → yinhang（主读音是 xing 时靠它兜底）
+    if (!py.fullAlt.empty()) {
+        if (py.fullAlt.size() >= qa.size() && py.fullAlt.compare(0, qa.size(), qa) == 0) {
+            return 840 - (int)std::min<size_t>(py.fullAlt.size() - qa.size(), 60);
+        }
+        if (py.fullAlt.find(qa) != std::string::npos) return 650;
+    }
+    // 首字母子序列：gzb → gzbb（和英文名那套 isSubseq 同一个思路）
+    if (py.initials.size() >= 2 && isSubseqAscii(qa, py.initials)) {
+        return std::max(300, 600 - (int)(py.initials.size() - qa.size()) * 10);
+    }
+    return 0;
+}
+
 int scoreOf(const std::wstring& nameLower, const std::wstring& q, const std::wstring& name,
-            bool fuzzy) {
+            const std::string& qa, bool fuzzy) {
     if (nameLower == q) return 1000;
     if (nameLower.compare(0, q.size(), q) == 0 && nameLower.size() >= q.size()) {
         return 900 - (int)std::min<size_t>(nameLower.size() - q.size(), 60);
@@ -464,6 +547,12 @@ int scoreOf(const std::wstring& nameLower, const std::wstring& q, const std::wst
         if (ini.size() >= 2 && isSubseq(q, ini)) {
             return std::max(300, 560 - (int)(ini.size() - q.size()) * 10);
         }
+    }
+    // ★ 拼音：中文名可以用全拼或首字母搜到（用户明确要求）。
+    //   必须放在 fuzzy 判定之前 —— 首字母查询（gzb）不该受"至少 3 个字符才模糊"的限制。
+    if (hasHanChar(name)) {
+        const int ps = scorePinyin(qa, pyFormsCached(name));
+        if (ps > 0) return ps;
     }
     if (!fuzzy) return 0;
     size_t pos = 0;
@@ -613,6 +702,7 @@ std::vector<SearchHit> runQuery(const std::wstring& q, int maxHits) {
     }
     bool extMode = ql.size() > 1 && ql[0] == L'.';
     bool fuzzy = ql.size() >= 3 && !extMode;
+    const std::string qa = asciiQuery(ql);   // 拼音匹配用（非 ASCII 查询会得到空串）
 
     struct Scored {
         int s;
@@ -642,7 +732,7 @@ std::vector<SearchHit> runQuery(const std::wstring& q, int maxHits) {
             if (extMode) {
                 s = endsWith(e.nameLower, ql.c_str()) ? 640 : 0;
             } else {
-                s = scoreOf(e.nameLower, ql, e.name, fuzzy);
+                s = scoreOf(e.nameLower, ql, e.name, qa, fuzzy);
             }
             if (pathMode) {
                 std::wstring hay = lowerW(e.parent + L"\\" + e.name);
