@@ -1,3 +1,8 @@
+// Copyright (c) 2026 HotRain927
+// Required Notice: Copyright (c) 2026 HotRain927 (https://github.com/HotRain927)
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// 本文件属于 hotrainy：仅限非商业用途，商业使用需另行获得作者授权（见 LICENSE）。
+
 // hr/audio.h — 音频波动条（对照 ui/audio_bar.py + core/audio_capture.py）
 //
 // 屏幕最左侧纵向频谱条：高度 2/3 屏、纵向居中、宽度 = 屏宽*3/52（最小 32）。

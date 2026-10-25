@@ -1,3 +1,8 @@
+// Copyright (c) 2026 HotRain927
+// Required Notice: Copyright (c) 2026 HotRain927 (https://github.com/HotRain927)
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// 本文件属于 hotrainy：仅限非商业用途，商业使用需另行获得作者授权（见 LICENSE）。
+
 // tools/shot.cpp — 把屏幕某块区域存成 PNG，用来肉眼核对材质效果
 // 用法: shot.exe out.png x y w h
 #include <objidl.h>

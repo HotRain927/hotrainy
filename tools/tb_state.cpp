@@ -1,3 +1,8 @@
+// Copyright (c) 2026 HotRain927
+// Required Notice: Copyright (c) 2026 HotRain927 (https://github.com/HotRain927)
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// 本文件属于 hotrainy：仅限非商业用途，商业使用需另行获得作者授权（见 LICENSE）。
+
 // tools/tb_state.cpp — 打印任务栏窗口当前的透明状态（诊断用）
 // 看 WS_EX_LAYERED 是否还挂着、alpha 是多少，用来判断"退出后有没有恢复"。
 #include <windows.h>

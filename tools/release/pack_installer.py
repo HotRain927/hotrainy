@@ -1,3 +1,8 @@
+# Copyright (c) 2026 HotRain927
+# Required Notice: Copyright (c) 2026 HotRain927 (https://github.com/HotRain927)
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# This file is part of hotrainy: noncommercial use only; see LICENSE.
+
 import io, os, struct, sys
 
 DIST = r"C:\hot_rain\dist_v3"

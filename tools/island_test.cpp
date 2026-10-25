@@ -1,4 +1,9 @@
-﻿// tools/island_test.cpp — 验证任务栏「开始」「搜索」按钮能否隐藏
+﻿// Copyright (c) 2026 HotRain927
+// Required Notice: Copyright (c) 2026 HotRain927 (https://github.com/HotRain927)
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// 本文件属于 hotrainy：仅限非商业用途，商业使用需另行获得作者授权（见 LICENSE）。
+
+// tools/island_test.cpp — 验证任务栏「开始」「搜索」按钮能否隐藏
 //
 // 不启动主程序，直接连共享内存通道给 explorer 里的 DLL 发命令，
 // 然后截屏比对任务栏左端的像素变化。

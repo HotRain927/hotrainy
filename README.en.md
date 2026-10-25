@@ -127,10 +127,13 @@ want to be certain, build it from source yourself or wait for a code-signed buil
 
 This program modifies the system taskbar appearance. A Windows update may break parts of it, and it
 can conflict with other taskbar tools (TranslucentTB, RoundedTB, ExplorerPatcher) — **keep only one**.
-Use at your own risk; the project is provided "as is" under the MIT license, without warranty.
+Use at your own risk; the project is provided "as is" under the PolyForm Noncommercial License 1.0.0
+(source-available; **commercial use prohibited**), without warranty.
 
 ## License
 
-MIT — see [LICENSE](LICENSE). Taskbar transparency was informed by the *technical principles* of
+**PolyForm Noncommercial 1.0.0** — source-available, **commercial use prohibited**; redistributors
+must pass on the LICENSE text and every `Required Notice:` line (see [NOTICE](NOTICE)).
+Taskbar transparency was informed by the *technical principles* of
 TranslucentTB (GPL-3.0); all code in this repository is original. See
 [`docs/许可证与原创性说明.md`](docs/许可证与原创性说明.md). An originality self-audit against TranslucentTB's real source (file size, identifier sets, implementation mechanism, comment language) is archived in `docs/原创性比对报告.md`.

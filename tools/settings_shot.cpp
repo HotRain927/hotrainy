@@ -1,3 +1,8 @@
+// Copyright (c) 2026 HotRain927
+// Required Notice: Copyright (c) 2026 HotRain927 (https://github.com/HotRain927)
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// 本文件属于 hotrainy：仅限非商业用途，商业使用需另行获得作者授权（见 LICENSE）。
+
 // tools/settings_shot.cpp — 单独把设置窗口跑起来并截图，用来核对版式
 // 只链接绘制相关的几个模块，不碰标签栏 / 托盘 / 热键，可以和应用实例同时跑。
 #include "hr/common.h"   // 必须最先：引入 windows.h

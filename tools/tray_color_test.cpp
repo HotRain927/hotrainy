@@ -1,4 +1,9 @@
-﻿// tools/tray_color_test.cpp — 测试托盘文字变色是否生效
+﻿// Copyright (c) 2026 HotRain927
+// Required Notice: Copyright (c) 2026 HotRain927 (https://github.com/HotRain927)
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// 本文件属于 hotrainy：仅限非商业用途，商业使用需另行获得作者授权（见 LICENSE）。
+
+// tools/tray_color_test.cpp — 测试托盘文字变色是否生效
 //
 // 直接连共享内存通道，给 explorer 里的 DLL 发「改深色 / 改浅色」命令，
 // 并截取任务栏右侧区域比较像素变化，验证颜色真的变了。

@@ -1,3 +1,8 @@
+// Copyright (c) 2026 HotRain927
+// Required Notice: Copyright (c) 2026 HotRain927 (https://github.com/HotRain927)
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// 本文件属于 hotrainy：仅限非商业用途，商业使用需另行获得作者授权（见 LICENSE）。
+
 // hr/tagbar/tabs_menu_wire.cpp — 标签栏/面板的右键菜单（增删改）+ 托盘菜单。
 //
 // 结构重构第 2 片：这一整块原来堆在 main.cpp 里（约 300 行），

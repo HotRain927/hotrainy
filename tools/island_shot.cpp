@@ -1,4 +1,9 @@
-﻿// tools/island_shot.cpp — 岛台接管前后截图对比
+﻿// Copyright (c) 2026 HotRain927
+// Required Notice: Copyright (c) 2026 HotRain927 (https://github.com/HotRain927)
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// 本文件属于 hotrainy：仅限非商业用途，商业使用需另行获得作者授权（见 LICENSE）。
+
+// tools/island_shot.cpp — 岛台接管前后截图对比
 //
 // 每次调用：截任务栏左端一条，存成 PNG。
 // 配合外部命令开关岛台，人工对比两张图即可。

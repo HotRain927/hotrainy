@@ -1,3 +1,8 @@
+// Copyright (c) 2026 HotRain927
+// Required Notice: Copyright (c) 2026 HotRain927 (https://github.com/HotRain927)
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// 本文件属于 hotrainy：仅限非商业用途，商业使用需另行获得作者授权（见 LICENSE）。
+
 // icon_probe.cpp — 图标提取对照测试（不进主程序）
 // 目的：搞清 SHGetFileInfoW / IShellItemImageFactory / SHGetImageList
 //      在本机对不同路径写法分别返回什么，并把图标存成 PNG 肉眼看。

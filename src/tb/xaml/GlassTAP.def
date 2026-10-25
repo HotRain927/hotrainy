@@ -1,3 +1,7 @@
+; Copyright (c) 2026 HotRain927
+; Required Notice: Copyright (c) 2026 HotRain927 (https://github.com/HotRain927)
+; SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+
 ; GlassTAP.def — DLL 导出表
 ;
 ; ⚠ DllGetClassObject 必须导出，否则 InitializeXamlDiagnosticsEx

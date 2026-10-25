@@ -1,3 +1,8 @@
+// Copyright (c) 2026 HotRain927
+// Required Notice: Copyright (c) 2026 HotRain927 (https://github.com/HotRain927)
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// 本文件属于 hotrainy：仅限非商业用途，商业使用需另行获得作者授权（见 LICENSE）。
+
 // hr/glass/glass.h — 玻璃渲染管线（对照 core/glass_render.py）
 //
 // 流程：抓屏 → 缩到 1/4 模糊(frost) → 叠竖向色调渐变 → 顶部镜面高光

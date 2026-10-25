@@ -1,3 +1,8 @@
+// Copyright (c) 2026 HotRain927
+// Required Notice: Copyright (c) 2026 HotRain927 (https://github.com/HotRain927)
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// 本文件属于 hotrainy：仅限非商业用途，商业使用需另行获得作者授权（见 LICENSE）。
+
 // hr/tagbar/tagbar_wire.cpp — 标签栏 + 它的悬停面板的接线。
 //
 // 结构重构第 3 片：原 main.cpp 里那 8 处 g_bar.onXxx / g_panel.onXxx 搬到这里

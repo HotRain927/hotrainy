@@ -1,3 +1,8 @@
+// Copyright (c) 2026 HotRain927
+// Required Notice: Copyright (c) 2026 HotRain927 (https://github.com/HotRain927)
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// 本文件属于 hotrainy：仅限非商业用途，商业使用需另行获得作者授权（见 LICENSE）。
+
 // ★ 本文件由 D:\dsh\workspace\gen_pinyin_table.py 生成，请勿手改。
 //   数据源：pypinyin（GB2312 全部汉字，多音字最多 3 读）。
 //   音节表用"偏移"索引（偏移指向本数组里该音节的首字节）。

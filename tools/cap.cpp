@@ -1,3 +1,8 @@
+// Copyright (c) 2026 HotRain927
+// Required Notice: Copyright (c) 2026 HotRain927 (https://github.com/HotRain927)
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// 本文件属于 hotrainy：仅限非商业用途，商业使用需另行获得作者授权（见 LICENSE）。
+
 // cap.cpp — 高频连拍屏幕区域，把"内容变化"的帧存成 BMP，用来抓瞬间频闪
 // 用法: cap.exe <outdir> <x> <y> <w> <h> <frames> <interval_ms> "<frame:x,y;frame:x,y>"
 #include <windows.h>

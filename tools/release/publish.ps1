@@ -1,4 +1,9 @@
-﻿# publish.ps1 — 一键把 hotrainy 发布到 GitHub（建仓库 + 推送 + 发 Release + 传安装包）
+﻿# Copyright (c) 2026 HotRain927
+# Required Notice: Copyright (c) 2026 HotRain927 (https://github.com/HotRain927)
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# This file is part of hotrainy: noncommercial use only; see LICENSE.
+
+# publish.ps1 — 一键把 hotrainy 发布到 GitHub（建仓库 + 推送 + 发 Release + 传安装包）
 #
 # 用法（双击同目录的 发布到GitHub.cmd 即可，或手动）：
 #   powershell -NoProfile -ExecutionPolicy Bypass -File publish.ps1

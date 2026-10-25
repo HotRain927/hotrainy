@@ -1,0 +1,23 @@
+hotrainy
+Copyright (c) 2026 HotRain927
+https://github.com/HotRain927/hotrainy
+
+Required Notice: Copyright (c) 2026 HotRain927 (https://github.com/HotRain927)
+
+本项目以 PolyForm Noncommercial License 1.0.0 授权（全文见 LICENSE）：
+
+  * 允许：个人学习 / 研究 / 实验 / 私人娱乐 / 业余项目、慈善机构、教育机构、
+          公共研究机构、公共安全或卫生机构、环保组织、政府机构等**非商业**用途；
+          以及在这些范围内修改、创作新作品、再分发。
+  * 禁止：任何**商业用途** —— 包括但不限于售卖本项目或其修改版、
+          以本项目为基础提供收费服务、将其打包进商业产品。
+  * 再分发时**必须**一并转交：LICENSE 全文（或上面那个 URL）、
+          以及所有以 `Required Notice:` 开头的行、SPDX 许可标识。
+
+商业授权、二次开发合作请联系作者。
+
+--------
+
+第三方内容：
+  third_party/ 目录下的内容版权归其各自作者所有，适用其自身条款，
+  不在上述授权范围内。

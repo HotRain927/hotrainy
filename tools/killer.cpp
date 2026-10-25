@@ -1,3 +1,8 @@
+// Copyright (c) 2026 HotRain927
+// Required Notice: Copyright (c) 2026 HotRain927 (https://github.com/HotRain927)
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// 本文件属于 hotrainy：仅限非商业用途，商业使用需另行获得作者授权（见 LICENSE）。
+
 // tools/killer.cpp — 给指定 PID 的 hotrainy 实例投 WM_CLOSE（优雅退出）
 // 必须按 PID 精确匹配：本机可能同时跑着另一个 hotrainy 实例，
 // 只按窗口标题找会误关别人的进程。

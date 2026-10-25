@@ -1,3 +1,8 @@
+// Copyright (c) 2026 HotRain927
+// Required Notice: Copyright (c) 2026 HotRain927 (https://github.com/HotRain927)
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// 本文件属于 hotrainy：仅限非商业用途，商业使用需另行获得作者授权（见 LICENSE）。
+
 // hr/dialog.cpp — 玻璃弹窗（逐行对照 ui/glass_dialog.py）
 //
 // 与设置窗口同一套烘焙玻璃，只是面积小、多压一层雾（深 40 / 浅 34）。

@@ -1,3 +1,8 @@
+@REM Copyright (c) 2026 HotRain927
+@REM Required Notice: Copyright (c) 2026 HotRain927 (https://github.com/HotRain927)
+@REM SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+@REM This file is part of hotrainy: noncommercial use only; see LICENSE.
+
 @echo off
 REM build_msvc.bat — 用 MSVC 构建 hotrainy + GlassTAP.dll
 REM

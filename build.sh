@@ -1,3 +1,8 @@
+# Copyright (c) 2026 HotRain927
+# Required Notice: Copyright (c) 2026 HotRain927 (https://github.com/HotRain927)
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# This file is part of hotrainy: noncommercial use only; see LICENSE.
+
 #!/bin/sh
 # build.sh — 构建 hotrainy 的 C++ 版（mingw-w64 g++）
 set -e

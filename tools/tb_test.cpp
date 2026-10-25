@@ -1,3 +1,8 @@
+// Copyright (c) 2026 HotRain927
+// Required Notice: Copyright (c) 2026 HotRain927 (https://github.com/HotRain927)
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// 本文件属于 hotrainy：仅限非商业用途，商业使用需另行获得作者授权（见 LICENSE）。
+
 // tools/tb_test.cpp — 任务栏透明冒烟测试（控制台）
 // 开 → 打印状态与实测色差 → 关 → 打印状态，最后恢复系统默认。
 // 用法: tb_test.exe [每步停留毫秒，默认 1600]

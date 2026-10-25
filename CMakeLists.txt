@@ -1,3 +1,8 @@
+# Copyright (c) 2026 HotRain927
+# Required Notice: Copyright (c) 2026 HotRain927 (https://github.com/HotRain927)
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# This file is part of hotrainy: noncommercial use only; see LICENSE.
+
 # CMakeLists.txt — hotrainy 构建配置
 #
 # ⚠ 必须用 MSVC（不是 MinGW）：
