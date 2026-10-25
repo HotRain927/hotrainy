@@ -100,6 +100,10 @@ public:
     void refreshBackdrop(bool force);
     void tickBackdrop();        // 700ms：巡检背后画面
     void autoHideTick();        // 150ms：自动隐藏
+    // 用光标位置同步悬停态（由 autoHideTick 的 50ms 轮询顺手调用）。
+    // 悬停原来只由 WM_MOUSEMOVE 驱动 —— 鼠标停在标签上不动时系统不再发移动消息，
+    // 面板就永远不弹，得抖一下鼠标（用户："鼠标移动到标签就要快速出现"）。
+    void syncHoverFromCursor();
     void redraw();
 
     // 深浅色调在运行中变了（整屏平均亮度跨过阈值）→ 通知外层同步面板/搜索窗

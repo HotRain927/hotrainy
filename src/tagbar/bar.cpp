@@ -628,6 +628,55 @@ void BarWindow::autoHideTick() {
         clearHover();  // 收起时连悬停态一起清掉，下次唤出不会残留胶囊
         hideBar();
     }
+
+    // ★ 顺手用光标位置同步一次悬停态。
+    //
+    //   悬停原来**只**由 WM_MOUSEMOVE 驱动：鼠标移到标签上停住不动时，
+    //   系统不再发移动消息 -> 悬停计时器根本不会被点着 -> 面板不弹，
+    //   用户得抖一下鼠标它才出来（"鼠标移动到标签就要快速出现"）。
+    //   这里是已有的 50ms 轮询（main.cpp 调的），借它把"停住"这种情况补上。
+    //   ⚠ 仍然保留 35ms 停留阈值（扫过标签时不弹），只是不再依赖鼠标移动事件。
+    syncHoverFromCursor();
+}
+
+// 见 bar.h 的说明。
+void BarWindow::syncHoverFromCursor() {
+    if (!cfg_ || !hwnd_ || !visible_) return;
+
+    POINT p = {};
+    GetCursorPos(&p);
+    RECT wr = {};
+    GetWindowRect(hwnd_, &wr);
+    if (wr.bottom <= wr.top) return;
+
+    const int x = p.x - wr.left;
+    const bool insideRow = (p.y >= wr.top && p.y < wr.bottom);
+
+    // 左右小图标的悬停也顺手同步（原来同样只在 WM_MOUSEMOVE 里更新）
+    const int icon = insideRow ? iconAt(x) : -1;
+    if (icon != iconHover_) {
+        iconHover_ = icon;
+        redraw();
+    }
+
+    if (!insideRow) return;
+
+    const int idx = tabAt(x);
+    if (idx == hoverPending_) return;
+
+    hoverPending_ = idx;
+    if (hoverTimer_) {
+        KillTimer(hwnd_, kHoverTimerId);
+        hoverTimer_ = 0;
+    }
+    if (idx >= 0) {
+        // 和 WM_MOUSEMOVE 那条路一样：35ms 停留阈值
+        hoverTimer_ = SetTimer(hwnd_, kHoverTimerId, 35, nullptr);
+    } else if (hover_ >= 0) {
+        hover_ = -1;
+        redraw();
+        if (onLeave) onLeave();
+    }
 }
 
 LRESULT CALLBACK BarWindow::proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {

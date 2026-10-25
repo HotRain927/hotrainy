@@ -140,26 +140,15 @@ void HoverPanel::showForTab(int tabIndex, int x, int y, int width, int screenH) 
 
     const DWORD tEntry0 = ::GetTickCount();
 
-    if (!sameGeom) {
-        // 面板已经开着时它自己正盖在要抓的区域上。
-        // 相邻标签的新位置和旧位置不重叠（干净屏幕），直接抓就行 —— 省一次
-        // 收起/重现，也不会有「面板闪一下」的观感；
-        // 只有真的重叠（同一标签重开、尺寸变了）才需要先收起来再抓。
-        bool overlap = wasVisible && !(x_ + w_ <= oldRect.left || x_ >= oldRect.right ||
-                                       y_ + h_ <= oldRect.top || y_ >= oldRect.bottom);
-        if (overlap) {
-            // 直接收起来，等 DWM 把它从合成画面里摘掉再抓。
-            // 原来用 SWP_NOREDRAW 挪到屏幕外：对分层窗口没用 —— SWP_NOREDRAW 只挡
-            // WM_PAINT，DWM 照样按新坐标合成，中间那两帧面板是「凭空消失」的。
-            ShowWindow(hwnd_, SW_HIDE);
-            DwmFlush();
-            needShow = true;  // 收起来抓完背景，下面还要按新帧重新出现
-        }
-        RECT rc = {x_, y_, x_ + w_, y_ + h_};
-        Backdrop bd;
-        if (Surface::capture(rc, 0, bd)) backdrop_ = bd;
-        baseValid_ = false;
-    }
+    // ★ 这里原来要"先收起来 -> DwmFlush -> BitBlt 抓屏"再烘焙玻璃底 ——
+    //   是标签面板展开慢、以及切标签时"闪一下"的主因。
+    //   而现在面板主体是**纯色雾 + 边框**（buildFlatPanel），根本不看抓来的背景：
+    //   那趟抓屏是早期"抓屏做玻璃"管线的遗留，纯属白干。
+    //   删掉之后：没有 ShowWindow(SW_HIDE)/DwmFlush 的闪动，展开只花烘焙那 ~15ms。
+    //   （sameGeom 仍然保留：几何/壁纸都没变就不必重烘焙。）
+    (void)oldRect;
+    (void)wasVisible;
+    if (!sameGeom) baseValid_ = false;
     const DWORD tCap = ::GetTickCount();
 
     // 展开耗时打点。
@@ -529,25 +518,15 @@ bool HoverPanel::isOwnWindow(HWND h) const {
 }
 
 void HoverPanel::refreshBackdropLive() {
-    // 对照 Python 的 _rebuild_offscreen：面板可见时抓屏会把自己拍进去，
-    // 所以先收起来、等 DWM 合成一帧，抓完再按新帧重新出现。
-    // 不用「挪到屏幕外」那套：SWP_NOREDRAW 只挡 WM_PAINT，DWM 依旧按新坐标
-    // 合成，面板会实打实地消失两帧再回来，那就是一次频闪。
-    // 也不用 WDA_EXCLUDEFROMCAPTURE：那会让用户自己的截图/录屏也拍不到面板。
-    ShowWindow(hwnd_, SW_HIDE);
-    DwmFlush();
-
-    RECT rc = {x_, y_, x_ + w_, y_ + h_};
-    Backdrop bd;
-    bool ok = Surface::capture(rc, 0, bd);
-
-    if (ok && bd.sig != backdrop_.sig) {
-        backdrop_ = bd;
-        baseValid_ = false;
-        rebuildBase();
-    }
-    redraw();
-    ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
+    // ★ 现在这里是空操作。
+    //
+    //   原来它每次都把面板 ShowWindow(SW_HIDE) -> DwmFlush -> 抓屏 -> 显示，
+    //   是"鼠标碰到标签面板闪一下"的另一个根因。
+    //   而面板主体是纯色雾 + 边框（buildFlatPanel），**不看抓来的背景** ——
+    //   那趟抓屏（连同那一藏一显）是早期"抓屏做玻璃"管线的遗留，纯属白干。
+    //
+    //   几何变化时的重烘焙由 showForTab() 负责，这里什么都不用做。
+    return;
 }
 
 void HoverPanel::pollTick(const RECT& barRect) {
