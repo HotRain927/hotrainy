@@ -25,6 +25,7 @@
 #include "hr/tb/xaml/injector.h"
 #include "hr/text/theme.h"
 #include "hr/app/app_context.h"
+#include "hr/app/version.h"
 #include "hr/settings/settings_wire.h"
 #include "hr/search/search_wire.h"
 #include "hr/island/island_wire.h"
@@ -34,7 +35,7 @@ using namespace hr;
 namespace {
 
 const wchar_t* kAppName = L"hotrainy";
-const char* kVersion = "11.2";
+// ★ 版本号已抽到 hr/app/version.h（接线文件也要用，别再写死在这里）。
 const UINT kTrayMsg = WM_APP + 10;
 const UINT kTrayId = 1;
 const UINT_PTR kAutoHideTimer = 0xC1;
@@ -908,20 +909,7 @@ bool applySetting(const std::string& key) {
     return true;
 }
 
-void openSettings() {
-    logf("settings: 准备打开设置窗口（active tab=%d）", g_bar.active());
-    hidePanel();
-    if (g_settings.isOpen()) {
-        g_settings.setActiveTab(g_bar.active());
-        return;
-    }
-    g_settings.setActiveTab(g_bar.active());
-    logf("settings: 设置回调");
-    settingsWire();   // 设置模块的接线（已搬到 src/settings/settings_wire.cpp）
-    logf("settings: 调 open()");
-    const bool ok = g_settings.open(GetModuleHandleW(nullptr), &g_cfg, g_dark, kVersion);
-    logf("settings: open() 返回 %d", (int)ok);
-}
+// ★ openSettings() 已搬到 src/settings/settings_wire.cpp（声明见 settings_wire.h）。
 
 // ── 右键菜单的增删改（对照 main.py 的 CRUD 一段） ──
 
@@ -1736,4 +1724,6 @@ DWORD&          pendingCloseTick() { return g_pendingCloseTick; }
 void            toggleIslandPanelWire(RECT btn) { ::toggleIslandPanel(btn); }
 bool            applySettingKey(const std::string& key) { return ::applySetting(key); }
 ContextMenuHooks makeHooksWire() { return ::makeHooks(); }
+bool& dark() { return ::g_dark; }
+void hidePanelWire() { ::hidePanel(); }
 }  // namespace hr

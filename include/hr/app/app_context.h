@@ -33,6 +33,8 @@ HWND           msgWnd();      // 主消息窗
 HWND&          dialogDismissed();  // 搜索窗自动收起时要关掉的那个对话框句柄
 DWORD&         iconClickTick();    // 任务栏岛台按钮最近一次点击的时刻
 DWORD&         pendingCloseTick(); // 挂起的"点外收起"时刻
+bool&          dark();             // 全局深浅（面板/搜索窗等共用）
+void           hidePanelWire();    // 收起悬停面板（main.cpp 内部 hidePanel 的包装）
 
 // 打开/收起岛台面板（原 main.cpp 内部 toggleIslandPanel 的外部包装；故意不同名以免歧义）
 void toggleIslandPanelWire(RECT btn);
