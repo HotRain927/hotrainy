@@ -24,6 +24,7 @@
 #include "hr/island/taskbar.h"
 #include "hr/tb/xaml/injector.h"
 #include "hr/text/theme.h"
+#include "hr/app/app_context.h"
 
 using namespace hr;
 
@@ -1396,6 +1397,25 @@ LRESULT CALLBACK msgProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     }
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  应用上下文访问器（见 include/hr/app/app_context.h）
+//
+//  这些对象原本定义在上面的匿名命名空间里（内部链接），各模块的接线文件拿不到。
+//  这里只提供"返回引用"的薄包装，不改变任何行为；新模块在此加一行即可。
+// ═══════════════════════════════════════════════════════════════════════════
+namespace hr {
+Config&         cfg()        { return g_cfg; }
+BarWindow&      bar()        { return g_bar; }
+HoverPanel&     panel()      { return g_panel; }
+IslandWindow&   island()     { return g_island; }
+IslandButton&   islandBtn()  { return g_islandBtn; }
+SearchWindow&   search()     { return g_search; }
+SettingsWindow& settings()   { return g_settings; }
+HWND            msgWnd()     { return g_msgWnd; }
+bool            applySettingKey(const std::string& key) { return ::applySetting(key); }
+}  // namespace hr
 
 }  // namespace
 
