@@ -1358,17 +1358,27 @@ int SearchWindow::rowAt(int y) const {
 }
 
 const wchar_t* SearchWindow::zoneAt(int x, int y) const {
-    int b = px(6);
+    // ★ 判定区放宽（照岛台；它自己踩过同样的坑：
+    //   "感应区放宽到 8px —— 6px 时不太好抓，尤其是 150% DPI 下
+    //    6 物理像素只有 4 逻辑像素"，岛台最终用 px(16)）。
+    //
+    //   原来 px(6)=9 物理像素，实测判定带只有 ~9 像素宽：
+    //   角要"横竖同时落进 9px"才成立 -> 基本抓不到（用户："有的角没办法改变"）；
+    //   稍偏一点只命中一条边 -> 只能左右 / 只能上下。
+    //   现在角给 px(24)=36 物理像素：拖角就是同时改宽改高，随手可得。
+    const int b = px(16);    // 边：24 物理像素
+    const int bc = px(24);   // 角：36 物理像素
     if (x < 0 || y < 0 || x > w_ || y > h_) return nullptr;
-    bool left = x <= b, right = x >= w_ - b, top = y <= b, bottom = y >= h_ - b;
-    if (top && left) return L"nw";
-    if (top && right) return L"ne";
-    if (bottom && left) return L"sw";
-    if (bottom && right) return L"se";
-    if (left) return L"w";
-    if (right) return L"e";
-    if (top) return L"n";
-    if (bottom) return L"s";
+    const bool cl = x <= bc, crr = x >= w_ - bc;
+    const bool ct = y <= bc, cbb = y >= h_ - bc;
+    if (ct && cl) return L"nw";
+    if (ct && crr) return L"ne";
+    if (cbb && cl) return L"sw";
+    if (cbb && crr) return L"se";
+    if (x <= b) return L"w";
+    if (x >= w_ - b) return L"e";
+    if (y <= b) return L"n";
+    if (y >= h_ - b) return L"s";
     return nullptr;
 }
 
@@ -1766,19 +1776,35 @@ LRESULT SearchWindow::handle(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             // ★ 与岛台同一套：把边框区域交还给**系统自己的缩放循环**。
             //   lParam 是**屏幕坐标**，先转客户区、再减掉外阴影留白得到内容坐标，
             //   然后复用 zoneAt() 判区域。
+            // ★ 判定坐标必须严格等于"画面里的内容坐标"，而它 =
+            //   窗口左上 + 非客户区边框 + 外阴影留白。三者都要算上：
+            //
+            //   三次直接探测（SendMessage WM_NCHITTEST）发现命中点恒在
+            //   "相对窗口左上 = 36"，而 36 = 21（留白）+ 15（WS_THICKFRAME 的
+            //   边框）—— 说明原来只减了留白、漏了边框那一圈，判定带因此退化成
+            //   ~0 宽（用户："有的角没反应、有的角只能一个方向"）。
             POINT p = {GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
-            ::ScreenToClient(hwnd, &p);
+            RECT wr{};
+            if (!::GetWindowRect(hwnd, &wr)) return HTCLIENT;
+            //   内容原点 = **窗口**左上 + 外阴影留白。
+            //   ⚠ 不要再加非客户区边框：UpdateLayeredWindow 的位图贴在窗口左上角，
+            //     不是客户区（实测 WS_THICKFRAME 的边框是 10px，多减会让判定再偏 10px）。
             const int s = shadowInset();
-            const wchar_t* z = zoneAt(p.x - s, p.y - s);
+            const wchar_t* z = zoneAt(p.x - (wr.left + s), p.y - (wr.top + s));
             if (!z) return HTCLIENT;
-            if (wcscmp(z, L"nw") == 0) return HTTOPLEFT;
-            if (wcscmp(z, L"ne") == 0) return HTTOPRIGHT;
-            if (wcscmp(z, L"sw") == 0) return HTBOTTOMLEFT;
+            // ★ 照岛台：**只留四个角**当缩放柄，四条边不进缩放。
+            //
+            //   岛台源码里就写着用户当初的原话 ——
+            //   "拖动一个角的时候上下左右移动的去改面板大小，删除拉边框更改的操作"，
+            //   所以岛台四条边不再返回 HTLEFT/HTTOP 等。
+            //
+            //   我上一版给边也返回了 HT 码，结果手落点稍偏就命中一条边：
+            //   "有的角只能左右、有的角只能上下、有的角干脆没反应"。
+            //   现在拖任意一个角 = 系统按 HT*CORNER 同时改宽改高。
             if (wcscmp(z, L"se") == 0) return HTBOTTOMRIGHT;
-            if (wcscmp(z, L"n") == 0) return HTTOP;
-            if (wcscmp(z, L"s") == 0) return HTBOTTOM;
-            if (wcscmp(z, L"w") == 0) return HTLEFT;
-            if (wcscmp(z, L"e") == 0) return HTRIGHT;
+            if (wcscmp(z, L"sw") == 0) return HTBOTTOMLEFT;
+            if (wcscmp(z, L"ne") == 0) return HTTOPRIGHT;
+            if (wcscmp(z, L"nw") == 0) return HTTOPLEFT;
             return HTCLIENT;
         }
 
@@ -1804,9 +1830,13 @@ LRESULT SearchWindow::handle(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_EXITSIZEMOVE:
             resizing_ = false;
             {
+                // ★ 松手了才刷新 —— 这是整个拖动/缩放过程中**唯一**一次重建重绘
+                //   （照岛台："松手后在 WM_EXITSIZEMOVE 里刷新一次"）。
                 const int s = shadowInset();
                 RECT wr{};
                 if (::GetWindowRect(hwnd, &wr)) {
+                    x_ = wr.left + s;
+                    y_ = wr.top + s;
                     w_ = std::max(px(kMinW), (int)(wr.right - wr.left) - s * 2);
                     h_ = std::max(px(kMinH), (int)(wr.bottom - wr.top) - s * 2);
                 }
@@ -1816,25 +1846,51 @@ LRESULT SearchWindow::handle(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             }
             return 0;
 
-        case WM_SIZE: {
-            if (wp == SIZE_MINIMIZED) break;
-            // ★ 内容尺寸 = 客户区 - 四周留白（窗口矩形由提交时的 dst/size 决定）。
-            //   缩放过程中每帧都要跟着更新并重画雾化底，否则下一帧提交还是旧尺寸，
-            //   窗口会被"弹回去"。
-            const int s = shadowInset();
-            RECT cr{};
-            if (::GetClientRect(hwnd, &cr)) {
-                int nw = std::max(px(kMinW), (int)(cr.right - cr.left) - s * 2);
-                int nh = std::max(px(kMinH), (int)(cr.bottom - cr.top) - s * 2);
-                if (nw != w_ || nh != h_) {
-                    w_ = nw;
-                    h_ = nh;
-                    buildGlass();
-                    layoutEntry();
-                    redraw();
+        case WM_WINDOWPOSCHANGED: {
+            // ⚠ 用 WM_WINDOWPOSCHANGED 而不是 WM_SIZE（照抄岛台那条实测结论）：
+            //   分层窗口被系统拖动改尺寸时 **WM_SIZE 不一定发**，
+            //   但 WM_WINDOWPOSCHANGED 一定会来。不处理它的表现就是
+            //   "能拖动改大小，但松手后又被画回原尺寸"。
+            //
+            //   而且**位置也必须同步**：拖左边/上边时系统会移动窗口原点，
+            //   而提交用的是我们自己算的 dst=(x_-s, y_-s)，位置不同步的话
+            //   下一帧就把窗口拉回原位，拖动全程在打架。
+            //
+            //   窗口矩形 = 内容 + 四周留白 ⇒ 位置 +s、尺寸 -2s。
+            auto wpos = reinterpret_cast<WINDOWPOS*>(lp);
+            if (wpos) {
+                const int s = shadowInset();
+                if (!(wpos->flags & SWP_NOMOVE)) {
+                    x_ = wpos->x + s;
+                    y_ = wpos->y + s;
+                }
+                bool sizeChanged = false;
+                if (!(wpos->flags & SWP_NOSIZE) && wpos->cx > 0 && wpos->cy > 0) {
+                    const int nw = std::max(px(kMinW), wpos->cx - s * 2);
+                    const int nh = std::max(px(kMinH), wpos->cy - s * 2);
+                    if (nw != w_ || nh != h_) {
+                        w_ = nw;
+                        h_ = nh;
+                        sizeChanged = true;
+                    }
+                }
+                // ★ 缩放/拖动期间**只同步几何，什么都不刷新**（照岛台）。
+                //
+                //   岛台注释原话："拖动中不做任何刷新。用户反馈：拖动的时候面板
+                //   有频闪，不要连带面板一起刷新。确实如此：每 100ms 重烘焙一遍、
+                //   再 UpdateLayeredWindow 推一帧，而系统同时在移窗口 —— 两边一叠
+                //   就是频闪。现在：拖动中完全不碰，只让系统移动窗口；松手后在
+                //   WM_EXITSIZEMOVE 里刷新一次。"
+                //
+                //   我这里每帧 buildGlass()（整张雾 + 逐像素距离场外阴影）+ redraw()
+                //   + 提交，属于几百毫秒级的重活 —— 直接把系统缩放循环堵死，
+                //   实测表现是"宽度只挪一点、高度干脆不动"。
+                (void)sizeChanged;
+                if (sizeChanged) {
+                    layoutEntry();   // 输入框是独立窗口，跟着挪一下（很便宜）
                 }
             }
-            return 0;
+            break;  // 继续交给 DefWindowProc
         }
 
         case WM_MOUSEMOVE: {
