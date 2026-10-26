@@ -1072,13 +1072,23 @@ int main() {
     tagbarWire();   // 标签栏 + 悬停面板的接线（见 src/tagbar/tagbar_wire.h）
     // ★ 音频条初次使用：按当前屏幕算一个合适大小并写进配置，
     //   之后用户就在这个基础上加减（不再有"0 = 自动"这种夹死减号的状态）。
-    if (g_cfg.audioBarW <= 0) g_cfg.audioBarW = std::max((int)(GetSystemMetrics(SM_CXSCREEN) / 6), 120);   // ★ 横向初始值调大：屏宽 / 6
-    if (g_cfg.audioBarH <= 0) g_cfg.audioBarH = GetSystemMetrics(SM_CYSCREEN) - 8;   // ★ 纵向初始值：接近满屏（屏高 -8）
+    // ★ 默认尺寸：横向丝带 —— 宽约 1/3 屏宽，高约其 1/8（用户要求"大概是横屏的
+    //   三分之一"）。原来的"屏宽/6 × 屏高-8"是给竖条用的，换成横向丝带后
+    //   高度会离谱。尺寸仍可在设置里用「音频条横向/纵向长度」调整。
+    if (g_cfg.audioBarW <= 0) g_cfg.audioBarW = std::max((int)(GetSystemMetrics(SM_CXSCREEN) / 3), 240);
+    if (g_cfg.audioBarH <= 0) g_cfg.audioBarH = std::max(g_cfg.audioBarW / 8, 80);
     saveConfig(g_cfg);
     initAudioBar(GetModuleHandleW(nullptr));
     audioWire();    // 音频条的接线（见 src/audio/audio_wire.cpp）
     setAudioBarGeometry(g_cfg.audioBarW, g_cfg.audioBarH);
     setAudioBarPos(g_cfg.audioBarX, g_cfg.audioBarY);
+    // ★ 拖动结束后把位置写回配置 —— 这个 hook 一直有接口却没接上，
+    //   所以"下次启动停在上次的位置"从来没生效过（用户明确要求要记住）。
+    setAudioBarMovedHook([](int x, int y) {
+        g_cfg.audioBarX = x;
+        g_cfg.audioBarY = y;
+        saveConfig(g_cfg);
+    });
 
     // ── 岛台 ──
     if (!g_island.create(GetModuleHandleW(nullptr), &g_cfg)) return 1;

@@ -214,31 +214,42 @@ void drawFrame() {
     };
 
     if (!silent) {
-        const int kStrands = 14;
-        for (int s = 0; s < kStrands; ++s) {
-            const double k = (s + 1) / (double)kStrands;      // 由内到外
-            const double ph = t * (0.6 + 0.35 * k) + s * 1.7; // 每根自己的相位
-            const uint32_t alpha = (uint32_t)(34 + 62 * k);
-            const uint32_t col = (alpha << 24) | 0x6E8CFFu;   // 蓝紫
-            int px = 0, pyT = 0, pyB = 0;
-            for (int x = 0; x <= (int)usable; ++x) {
-                const double u = x / usable;
-                const double a = maxAmp * envAt(u);
-                // 丝线自身的起伏：两根正弦叠加，形成"发丝"的漂动
-                const double wob = std::sin(u * 9.0 + ph) * 0.26 +
-                                   std::sin(u * 23.0 + ph * 1.7) * 0.12;
-                double off = a * (k + wob * (1.0 - k) * 0.9);
-                if (off < 0.0) off = 0.0;
-                const int X = margin + x;
-                const int YT = (int)std::lround(cy - off);
-                const int YB = (int)std::lround(cy + off);
-                if (x > 0) {
-                    g_frame.drawLine(px, pyT, X, YT, col, 1.0f);
-                    g_frame.drawLine(px, pyB, X, YB, col, 1.0f);
+        // ★ 每根丝线画两遍：粗而极淡的"光晕" + 细而亮的"芯" ——
+        //   叠加起来就有视频里那种辉光感（source-over 不会自发增亮）。
+        const int kStrands = 20;
+        const uint32_t haloCol = 0x166E8CFFu;                  // 光晕（很淡）
+        int px = 0, pyT = 0, pyB = 0, hx = 0, hyT = 0, hyB = 0;
+        for (int pass = 0; pass < 2; ++pass) {
+            const bool halo = (pass == 0);
+            for (int s = 0; s < kStrands; ++s) {
+                const double k = (s + 1) / (double)kStrands;   // 由内到外
+                const double ph = t * (0.7 + 0.5 * k) + s * 2.3;
+                const uint32_t alpha = halo ? 0u
+                                      : (uint32_t)(70 + 110 * k);
+                const uint32_t col = halo ? haloCol : ((alpha << 24) | 0x7E9CFFu);
+                int lx = 0, lyT = 0, lyB = 0;
+                for (int x = 0; x <= (int)usable; ++x) {
+                    const double u = x / usable;
+                    const double a = maxAmp * envAt(u);
+                    // ★ 三根不同频率的正弦叠加，且各根相位独立 —— 让丝线**交错**，
+                    //   而不是一圈圈同心嵌套（视频里的"发丝"感就来自交错）。
+                    const double wob = std::sin(u * 7.0 + ph) * 0.34 +
+                                       std::sin(u * 17.0 + ph * 1.9) * 0.20 +
+                                       std::sin(u * 41.0 + ph * 3.1) * 0.10;
+                    double off = a * (k * 0.85 + wob * 0.55);
+                    if (off < 0.0) off = 0.0;
+                    const int X = margin + x;
+                    const int YT = (int)std::lround(cy - off);
+                    const int YB = (int)std::lround(cy + off);
+                    if (x > 0) {
+                        g_frame.drawLine(lx, lyT, X, YT, col, halo ? 2.6f : 1.0f);
+                        g_frame.drawLine(lx, lyB, X, YB, col, halo ? 2.6f : 1.0f);
+                    }
+                    lx = X; lyT = YT; lyB = YB;
                 }
-                px = X; pyT = YT; pyB = YB;
             }
         }
+        (void)px; (void)pyT; (void)pyB; (void)hx; (void)hyT; (void)hyB;
     }
 
     // 中轴：稍亮的一条细线（静音时它就是那根"细线"）
@@ -320,7 +331,8 @@ static void applyAudioGeometryNow() {
     if (barH > sh) barH = sh;                 // 夹到屏幕内，否则底部画到屏幕外
     int barW = (g_cfgW > 0) ? g_cfgW : std::max((int)(sw * 3 / 52), 32);
     if (barW > sw) barW = sw;
-    int barY = (g_posY >= 0) ? g_posY : (sh - barH) / 2;   // remembered position
+    // ★ 默认位置：靠屏幕下方（留 1/12 屏高的边距）。原来是在垂直方向居中。
+    int barY = (g_posY >= 0) ? g_posY : (sh - barH) - sh / 12;   // remembered position
     if (barY < 0) barY = 0;
     if (barY + barH > sh) barY = std::max(0, sh - barH);   // 整窗留在屏幕上
     g_w = barW;
@@ -360,7 +372,8 @@ void startAudioBar() {
     int barW = (g_cfgW > 0) ? g_cfgW : std::max((int)(sw * 3 / 52), 32);
     if (barW > sw) barW = sw;
     // 位置：按用户选的 A——改尺寸/切方向时**位置不动**（左边贴边、纵向居中）
-    int barY = (g_posY >= 0) ? g_posY : (sh - barH) / 2;   // remembered position
+    // ★ 默认位置：靠屏幕下方（留 1/12 屏高的边距）。原来是在垂直方向居中。
+    int barY = (g_posY >= 0) ? g_posY : (sh - barH) - sh / 12;   // remembered position
     if (barY < 0) barY = 0;
     if (barY + barH > sh) barY = std::max(0, sh - barH);   // 整窗留在屏幕上
     g_w = barW;
