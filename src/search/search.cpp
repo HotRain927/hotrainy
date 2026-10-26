@@ -1357,30 +1357,6 @@ int SearchWindow::rowAt(int y) const {
     return idx;
 }
 
-const wchar_t* SearchWindow::zoneAt(int x, int y) const {
-    // ★ 判定区放宽（照岛台；它自己踩过同样的坑：
-    //   "感应区放宽到 8px —— 6px 时不太好抓，尤其是 150% DPI 下
-    //    6 物理像素只有 4 逻辑像素"，岛台最终用 px(16)）。
-    //
-    //   原来 px(6)=9 物理像素，实测判定带只有 ~9 像素宽：
-    //   角要"横竖同时落进 9px"才成立 -> 基本抓不到（用户："有的角没办法改变"）；
-    //   稍偏一点只命中一条边 -> 只能左右 / 只能上下。
-    //   现在角给 px(24)=36 物理像素：拖角就是同时改宽改高，随手可得。
-    const int b = px(16);    // 边：24 物理像素
-    const int bc = px(24);   // 角：36 物理像素
-    if (x < 0 || y < 0 || x > w_ || y > h_) return nullptr;
-    const bool cl = x <= bc, crr = x >= w_ - bc;
-    const bool ct = y <= bc, cbb = y >= h_ - bc;
-    if (ct && cl) return L"nw";
-    if (ct && crr) return L"ne";
-    if (cbb && cl) return L"sw";
-    if (cbb && crr) return L"se";
-    if (x <= b) return L"w";
-    if (x >= w_ - b) return L"e";
-    if (y <= b) return L"n";
-    if (y >= h_ - b) return L"s";
-    return nullptr;
-}
 
 //
 // 做法是把词写进输入框再走一遍正常的 runSearch ——
@@ -1833,6 +1809,53 @@ LRESULT SearchWindow::handle(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             break;
         }
 
+        case WM_SIZING: {
+            // ★ 照岛台：**拖动过程中就同步内部尺寸并重绘**。
+            //
+            //   岛台注释原话："分层窗口有个坑：窗口矩形由系统改（SetWindowPos），
+            //   但**画出来的大小**由 UpdateLayeredWindow 的 psize 决定。
+            //   如果只在拖动结束时更新 w_/h_，拖动全程画面都停在旧尺寸，
+            //   看起来就像'拖不动'。在这里实时同步，拖的时候就能看到面板跟着变。"
+            //
+            //   这正是搜索窗之前"角拖不动"的直接原因：只在
+            //   WM_WINDOWPOSCHANGED / WM_EXITSIZEMOVE 里同步，psize 一直没更新。
+            //
+            //   顺带夹住最小尺寸（夹的是内容，窗口另加四周留白），
+            //   防止把面板拖成一条缝找不回来。不写配置，持久化交给 EXITSIZEMOVE。
+            RECT* r = reinterpret_cast<RECT*>(lp);
+            if (!r) return TRUE;
+            const int s = shadowInset();
+            const int minW = px(kMinW) + s * 2;
+            const int minH = px(kMinH) + s * 2;
+            if (r->right - r->left < minW) {
+                if (wp == WMSZ_LEFT || wp == WMSZ_TOPLEFT || wp == WMSZ_BOTTOMLEFT) {
+                    r->left = r->right - minW;
+                } else {
+                    r->right = r->left + minW;
+                }
+            }
+            if (r->bottom - r->top < minH) {
+                if (wp == WMSZ_TOP || wp == WMSZ_TOPLEFT || wp == WMSZ_TOPRIGHT) {
+                    r->top = r->bottom - minH;
+                } else {
+                    r->bottom = r->top + minH;
+                }
+            }
+            const int nw = (r->right - r->left) - s * 2;
+            const int nh = (r->bottom - r->top) - s * 2;
+            if (nw > 0 && nh > 0 && (nw != w_ || nh != h_)) {
+                w_ = nw;
+                h_ = nh;
+                x_ = r->left + s;
+                y_ = r->top + s;
+                buildGlass();
+                layoutEntry();     // ★ 输入框是独立顶层窗口，必须跟着重摆
+                redraw();          // 提交新 psize —— 画面才会跟着变
+            }
+            return TRUE;
+        }
+
+
         case WM_ENTERSIZEMOVE:
             // 系统缩放循环开始：这期间不要因为"失焦"把面板收起来
             resizing_ = true;
@@ -1920,48 +1943,6 @@ LRESULT SearchWindow::handle(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_MOUSEMOVE: {
             const POINT cp = searchContentPt(hwnd, lp);
                 int mx = cp.x, my = cp.y;
-            if (resizing_) {
-                POINT cur = {};
-                GetCursorPos(&cur);
-                int dx = cur.x - rMouse_.x, dy = cur.y - rMouse_.y;
-                if (dx || dy) {
-                    resizeMoved_ = true;
-                    userDetached_ = true;
-                }
-                int minW = px(kMinW), minH = px(kMinH);
-                int nx = rStartX_, ny = rStartY_, nw = rStartW_, nh = rStartH_;
-                std::wstring z = resizeZone_ ? resizeZone_ : L"";
-                if (z.find(L'w') != std::wstring::npos) {
-                    nx = rStartX_ + dx;
-                    nw = rStartW_ - dx;
-                }
-                if (z.find(L'e') != std::wstring::npos) nw = rStartW_ + dx;
-                if (z.find(L'n') != std::wstring::npos) {
-                    ny = rStartY_ + dy;
-                    nh = rStartH_ - dy;
-                }
-                if (z.find(L's') != std::wstring::npos) nh = rStartH_ + dy;
-                if (nw < minW) {
-                    if (z.find(L'w') != std::wstring::npos) nx = rStartX_ + rStartW_ - minW;
-                    nw = minW;
-                }
-                if (nh < minH) {
-                    if (z.find(L'n') != std::wstring::npos) ny = rStartY_ + rStartH_ - minH;
-                    nh = minH;
-                }
-                x_ = nx;
-                y_ = ny;
-                w_ = nw;
-                h_ = nh;
-                {
-                    const int s = shadowInset();
-                    SetWindowPos(hwnd, nullptr, x_ - s, y_ - s, w_ + s * 2, h_ + s * 2,
-                                 SWP_NOZORDER | SWP_NOACTIVATE);
-                }
-                layoutEntry();
-                redraw();
-                return 0;
-            }
             if (dragging_) {
                 POINT cur = {};
                 GetCursorPos(&cur);
@@ -1988,13 +1969,6 @@ LRESULT SearchWindow::handle(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 sbDrag(cur.y);
                 return 0;
             }
-            const wchar_t* z = zoneAt(mx, my);
-            if (z) {
-                // ★ 用户明确要求：鼠标移到面板边框上**不要变光标**，保持普通箭头，
-                //   手感与岛台一致。拖边框改大小的行为照旧，只是不换光标。
-                SetCursor(LoadCursorW(nullptr, IDC_ARROW));
-                return 0;
-            }
             int idx = rowAt(my);
             if (idx != hotRow_) {
                 hotRow_ = (idx >= 0) ? idx : -1;
@@ -2011,22 +1985,6 @@ LRESULT SearchWindow::handle(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             HWND fg = GetForegroundWindow();
             if (fg != hwnd && fg != edit_) SetForegroundWindow(hwnd);
             if (edit_ && GetFocus() != edit_) SetFocus(edit_);
-            const wchar_t* z = zoneAt(mx, my);
-            if (z) {
-                resizeZone_ = z;
-                resizing_ = true;
-                resizeMoved_ = false;
-                rStartX_ = x_;
-                rStartY_ = y_;
-                rStartW_ = w_;
-                rStartH_ = h_;
-                POINT cur = {};
-                GetCursorPos(&cur);
-                rMouse_ = cur;
-                solidOnly_ = true;
-                SetCapture(hwnd);
-                return 0;
-            }
             // 滚动条
             if (mx >= w_ - px(18) && mx <= w_ - px(9) && my >= top_ && my <= h_ - px(32) &&
                 (int)hits_.size() > rowsVis_) {
@@ -2068,12 +2026,12 @@ LRESULT SearchWindow::handle(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 ReleaseCapture();
                 return 0;
             }
-            bool wasResize = resizing_ && resizeMoved_;
+            bool wasResize = false;   // 缩放已交给系统，不再自己收尾
             bool wasDrag = dragging_ && dragMoved_;
             bool was = resizing_ || dragging_;
             resizing_ = false;
             dragging_ = false;
-            resizeMoved_ = false;
+
             dragMoved_ = false;
             if (was) {
                 ReleaseCapture();

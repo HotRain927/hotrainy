@@ -111,7 +111,6 @@ private:
     void reveal(const SearchHit& hit);
 
     int rowAt(int y) const;
-    const wchar_t* zoneAt(int x, int y) const;
     void sbPress(int y);
     void sbDrag(int yRoot);
     void syncEntryColors();
@@ -156,10 +155,10 @@ private:
     // 交互
     bool dragging_ = false, dragMoved_ = false;
     POINT dragOffset_ = {0, 0};
-    const wchar_t* resizeZone_ = nullptr;
-    bool resizing_ = false, resizeMoved_ = false;
-    int rStartX_ = 0, rStartY_ = 0, rStartW_ = 0, rStartH_ = 0;
-    POINT rMouse_ = {0, 0};
+
+    bool resizing_ = false;           // 系统缩放进行中（抑制失焦收起）
+
+
     bool sbDragging_ = false;
     int sbStartY_ = 0, sbStartScroll_ = 0;
     int sbTrack_ = 0, sbThumb_ = 0, sbTravel_ = 0, sbMaxScroll_ = 1;
