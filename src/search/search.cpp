@@ -1003,6 +1003,11 @@ void SearchWindow::place(bool autoOnly) {
         int w = customSize_ ? std::max(px(kMinW), std::min(w_, sw)) : std::max(px(kMinW), r - l);
         int ny = 0, nh = 0;
         fitBelow(t - work.top, b - work.top, sh, ny, nh);
+        // ★ 用户手动调过大小（customSize_）就**保留他的高度**。
+        //   原来这里无条件采用 fitBelow 按目标窗口算出的高度 —— 于是
+        //   "跟随资源管理器/文件对话框时调好的大小，下次打开又被改回去"
+        //   （用户反馈）。宽度上面早就有 customSize_ 分支了，高度漏了。
+        if (customSize_) nh = std::max(px(kMinH), std::min(h_, sh));
         w_ = w;
         h_ = nh;
         x_ = l;
@@ -1563,6 +1568,7 @@ void SearchWindow::persistSize() {
     cfg_->searchW = (int)std::lround(w_ / s);
     cfg_->searchH = (int)std::lround(h_ / s);
     cfg_->searchSizeCustom = true;
+    customSize_ = true;      // ★ 内存里也要认，否则同一会话再打开又按目标窗口重算
     customSize_ = true;
     saveConfig(*cfg_);
 }
