@@ -121,10 +121,10 @@ void captureLoop() {
             // ★ 幅度更明显（用户要求）
             // ★ 频率提高（用户："让波动的频率更明显、更波动不齐"）
             double f = 0.46
-                     + 0.34 * std::sin(u * 16.0 - nowS * 1.10)
-                     + 0.26 * std::sin(u * 29.0 + nowS * 0.75 + 1.3)
-                     + 0.16 * std::sin(u * 53.0 - nowS * 1.90 + 2.6)
-                     + 0.10 * std::sin(u * 91.0 + nowS * 2.70 + 0.7);
+                     + 0.34 * std::sin(u * 13.0 - nowS * 1.10)
+                     + 0.26 * std::sin(u * 23.0 + nowS * 0.75 + 1.3)
+                     + 0.16 * std::sin(u * 41.0 - nowS * 1.90 + 2.6)
+                     + 0.10 * std::sin(u * 71.0 + nowS * 2.70 + 0.7);
             f = std::max(0.0, std::min(1.0, f));
             // ★ 中间更高、两端更低（圆顶更陡：两端 0.28、中间 1.0）
             const double dome = 0.28 + 0.72 * std::sin(kPi * u);
@@ -241,8 +241,8 @@ void drawFrame() {
         // ★ 包络层再加一道**逐像素**细密波纹（用户："更加波动不齐"）：
         //   频段插值本身很顺，只有靠它才能出参差不齐的细节。乘性叠加，
         //   响的地方波纹大、静的地方自动收敛。
-        const double ripple = 1.0 + 0.18 * std::sin(u * 118.0 + t * 1.7)
-                                  + 0.10 * std::sin(u * 227.0 - t * 2.3 + 0.9);
+        const double ripple = 1.0 + 0.15 * std::sin(u * 86.0 + t * 1.7)
+                                  + 0.08 * std::sin(u * 163.0 - t * 2.3 + 0.9);
         return std::max(0.0, v) * taper * ripple;
     };
 
