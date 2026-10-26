@@ -262,11 +262,17 @@ void drawFrame() {
         //   宽度仍是**逐层统一**的：同一层所有丝线一样宽，变淡只靠 alpha/颜色。
         // ★ 不要光晕（用户：不要光晕了，显得太粗了）：只留一根细亮芯。
         //   越向外越淡仍然靠 alpha 与颜色（饱和度/亮度）的线性梯度实现。
+        // ★ 光晕压到极限（用户：或者你把光晕压倒极限）：
+        //   宽而**几乎不可见** —— 6px 只有 alpha 0x04(1.6%)、2.4px 只有 0x0A(4%)。
+        //   宽 + 极低 alpha 观感上是一层光而不是一条粗线，
+        //   所以既保留了一点柔光，又不会显得粗。
         struct Pass { float w; uint32_t a0; uint32_t a1; };
-        const Pass passes[1] = {
-            {0.7f, 0xF0u, 0x08u},               // 仅亮芯：内 0xF0 -> 外 0x08
+        const Pass passes[3] = {
+            {6.0f, 0x04u, 0x00u},               // 极限微光（极宽极淡）
+            {2.4f, 0x0Au, 0x00u},               // 极限微光
+            {0.7f, 0xF0u, 0x08u},               // 亮芯：内 0xF0 -> 外 0x08
         };
-        for (int pass = 0; pass < 1; ++pass) {
+        for (int pass = 0; pass < 3; ++pass) {
             for (int s = 0; s < kStrands; ++s) {
                 const double k = (s + 1) / (double)kStrands;   // 由内到外
                 const double ph = t * (0.7 + 0.5 * k) + s * 2.3;
