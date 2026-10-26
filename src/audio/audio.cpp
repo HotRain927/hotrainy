@@ -247,13 +247,14 @@ void drawFrame() {
         //   再沿 x 加一点色相漂移 —— 色调更丰富。
         const int kStrands = 10;                // 根数少一点，避免叠成一条粗带
         const int kStep = 1;                    // 横向采样步长（1px -> 更顺）
-        // ★ 用户要求：越靠外面的线颜色越淡 —— 所以每层的 alpha 随 k（内->外）
-        //   **递减**（a0 是内圈、a1 是外圈），外圈同时再细一点。
+        // ★ 几何还原成第一版那套细线条（用户在"变粗"之后要求改回来）；
+        //   变淡方向保留"内亮外淡"，并把跨度拉大 —— 最外圈 alpha 归 0，
+        //   于是看起来是一层层往外化掉。
         struct Pass { float w; uint32_t a0; uint32_t a1; };
         const Pass passes[3] = {
-            {2.0f, 0x0Eu, 0x04u},               // 外光晕：很细很淡
-            {1.3f, 0x46u, 0x14u},               // 内光晕
-            {0.9f, 0xE6u, 0x5Au},               // 细芯：  内 0xE6 -> 外 0x5A（最亮在内）
+            {4.5f, 0x1Cu, 0x00u},               // 外光晕：内 0x1C -> 外 0x00（化掉）
+            {2.2f, 0x5Au, 0x0Au},               // 内光晕：内 0x5A -> 外 0x0A
+            {1.0f, 0xFFu, 0x3Cu},               // 细芯：  内 0xFF -> 外 0x3C（强对比）
         };
         for (int pass = 0; pass < 3; ++pass) {
             for (int s = 0; s < kStrands; ++s) {
@@ -283,6 +284,10 @@ void drawFrame() {
                     else if (g_tone == "red")    { hueA = 0.99; hueB = 0.945; sat = 0.86; val = 1.00; }
                     else if (g_tone == "yellow") { hueA = 0.145; hueB = 0.105; sat = 0.90; val = 1.00; }
                     else                         { hueA = 0.58; hueB = 0.635; sat = 0.82; val = 1.00; }
+                    // ★ 颜色本身也往外淡：外圈的饱和度与亮度都降下来
+                    //   （淡是"一层层退色"，不只看 alpha）。
+                    sat *= (1.0 - 0.60 * k);
+                    val *= (1.0 - 0.22 * k);
                     double hue = ((s % 2 == 0) ? hueA : hueB)
                                + 0.02 * std::sin(u * 5.0 + ph * 0.6);
                     hue -= std::floor(hue);
