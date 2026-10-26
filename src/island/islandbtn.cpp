@@ -253,19 +253,9 @@ bool IslandButton::create(HINSTANCE hInst, const RECT& slot) {
         //
         //   WDA_EXCLUDEFROMCAPTURE 已在 winuser.h 定义（Win10 2004+）
         //   ⚠ 不要自己再定一个同名变量 —— 会和宏冲突。
-        // ★★ 这里原来有一句：
-        //       ::SetWindowDisplayAffinity(hwnd_, WDA_EXCLUDEFROMCAPTURE);
-        //    目的是让任务栏悬停预览里那个 2x2 按钮"没内容可看"（纯外观）。
-        //
-        //    但它带来的是**系统级**副作用：Windows 会把带该标志的窗口当作
-        //    "受保护内容"报告给屏幕捕获 API —— NVIDIA ShadowPlay / Overlay
-        //    因此**直接拒绝录制**，提示"有受保护的程序正在运行"，而不是只把
-        //    这一个窗口画黑。用户在实机上确认了正是这个原因。
-        //
-        //    取舍：一块 2x2 像素的预览框 vs 整个系统的录屏能力 —— 显然保录屏。
-        //    ⚠ 以后若想再压掉那个预览，必须另找**不触碰捕获权限**的办法，
-        //      绝不能再给窗口设任何 WDA_* 捕获排除标志。
-        //    （删掉后，悬停任务栏时预览框里会显示这个小窗口本身，属于可接受的外观代价。）
+        const BOOL aff = ::SetWindowDisplayAffinity(hwnd_, WDA_EXCLUDEFROMCAPTURE);
+        logf("islandbtn: 对截取隐形 -> %s (err=%lu)",
+             aff ? "成功" : "失败", aff ? 0UL : ::GetLastError());
     }
 
 
