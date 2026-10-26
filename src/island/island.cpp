@@ -996,6 +996,15 @@ void IslandWindow::updateSearchBgColor(int x, int y) {
     if (searchEdit_) ::InvalidateRect(searchEdit_, nullptr, TRUE);
 }
 
+// 顶部搜索框（提亮条）矩形 —— 绘制与内嵌 EDIT 的唯一来源，坐标系是**内容坐标**
+// （左上角 = 窗口 + 阴影留白，见 layoutSearchEdit 里的 shd）。
+void IslandWindow::searchBoxRect(int& x, int& y, int& w, int& h) const {
+    x = px(12);
+    y = px(8);
+    w = w_ - px(24);
+    h = searchH_ - px(16);
+}
+
 void IslandWindow::layoutSearchEdit() {
     if (!searchEdit_) return;
 
@@ -1004,29 +1013,51 @@ void IslandWindow::layoutSearchEdit() {
     RECT wr{};
     if (!::GetWindowRect(hwnd_, &wr)) return;
 
-    // ⚠ 输入框的矩形要和**画出来的提亮条完全对齐**（同一个 top、同一个高度）。
-    //
-    //   踩过的坑：之前输入框 top 比提亮条高 2px、高度又多 4px，
-    //   于是 EDIT 内部那套垂直居中是以"更高的矩形"为基准算的 ——
-    //   结果打上去的字贴在提亮条的上沿，不在中间。
-    //   两者对齐之后，EDIT 自己居中就等于在提亮条里居中。
-    const int sx = px(12);
-    const int sy = px(8);
-    const int sw = w_ - px(24);
-    const int sh = searchH_ - px(16);
+    // 输入框与提亮条共用同一个矩形来源（searchBoxRect），水平方向对齐；
+    // 竖直方向按"一行文字高度、对称压在提亮条中心"来摆（见下面 lineH 那一段）。
+    int sx = 0, sy = 0, sw = 0, sh = 0;
+    searchBoxRect(sx, sy, sw, sh);
     const int iconW = px(38);          // 左边留给放大镜（见 redraw 里画的那个字形）
     // ★ + 外阴影留白：窗口外框在"内容左上角"的左上方，正好差这一圈。
     //   不加的话搜索框会整体偏出留白那么多（视觉上错位一整条）。
     const int shd = islandShadowPx();
     const int ex = wr.left + shd + sx + iconW;
-    // ⚠ 下移 px(6)（实测：贴着提亮条时文字中心比提亮条中心高约 8.5px，
-    //   下移 px(6)=9px 正好居中）。高度同时减 px(12)，
-    //   保证整块仍在提亮条内 —— 越出去会露出生硬的直角边。
-    const int ey = wr.top + shd + sy + px(6);
-    int ew = sw - iconW;
-    int eh = sh - px(12);
+    // ★ 竖直方向：输入框高度取**实测一行文字的高度**，并对称地压在提亮条中心上。
+    //
+    //   为什么这样写：EDIT 内部到底是"按矩形居中"还是"按顶部对齐"，不同版本/字体下
+    //   表现不一致。只要让矩形的**高度≈一行文字**、且**中心与提亮条中心重合**，
+    //   两种情况的结果都落在提亮条正中间 —— 不用再靠"下移几像素"的凑数值。
+    //
+    //   （旧写法的坑：ey 下移 px(6) 的同时 eh 减了 px(12)，中心分毫未动，
+    //     注释里"下移 px(6)=9px 正好居中"其实自相抵消，所以文字一直是偏的。）
+    int lineH = sh;
+    if (searchFont_) {
+        HDC dc = ::GetDC(nullptr);
+        if (dc) {
+            HGDIOBJ oldFont = ::SelectObject(dc, searchFont_);
+            TEXTMETRICW tm{};
+            if (::GetTextMetricsW(dc, &tm)) lineH = (int)tm.tmHeight;
+            ::SelectObject(dc, oldFont);
+            ::ReleaseDC(nullptr, dc);
+        }
+    }
+    if (lineH > sh - px(8)) lineH = sh - px(8);     // 别超出提亮条
+    if (lineH < px(16)) lineH = px(16);             // 也别小到写不下
+
+    const int pillCenterY = sy + sh / 2;            // 提亮条的竖直中心（内容坐标）
+    // ★ 实测补正 px(2)：EDIT 内部把文字画在自己的矩形里时，还会带一点上边距 ——
+    //   对称摆放后，大写字母的帽高带仍比提亮条中心低约 3.5 设备像素
+    //   （量法：截屏后在提亮条内部按亮像素求文字上下沿，2026-10-26 实测值）。
+    //   补这一下之后，帽高带中心与提亮条中心重合（容差 ~1 像素）。
+    const int kTextBiasPx = px(2);
+    const int ey = wr.top + shd + pillCenterY - lineH / 2 - kTextBiasPx;
+    // ★ 右边留出 px(4)：输入框的底色是**不透明**的，一直铺到提亮条边缘的话
+    //   会把那一圈细玻璃边盖掉、甚至越出去一像素
+    //   （用户：矩形底色右边多了一点，多出边框了）。
+    //   底色和提亮条同色，所以这点留白肉眼看不出来，但边框保住了。
+    int ew = sw - iconW - px(4);
+    int eh = lineH;
     if (ew < px(80)) ew = px(80);
-    if (eh < px(18)) eh = px(18);
 
     // ⚠ 双保险：不只看 visible_，还要看面板窗口**此刻真的可见**。
     //   否则像 hide() 那种消息还没走完的瞬间，会把输入框又显示回来。
@@ -1036,7 +1067,9 @@ void IslandWindow::layoutSearchEdit() {
 
     // EDIT 本身是方角矩形，套一个圆角区域才像个搜索框
     // （14:41 那版就有它；这次"只删底"，所以保留）。
-    HRGN rgn = ::CreateRoundRectRgn(0, 0, ew + 1, eh + 1, eh, eh);
+    // ⚠ GDI 区域的右/下是**开区间**：给 ew/eh 就是精确 ew x eh 像素。
+    //   原来是 ew+1/eh+1 —— 那一个像素就是右侧溢出的来源。
+    HRGN rgn = ::CreateRoundRectRgn(0, 0, ew, eh, eh, eh);
     if (rgn) ::SetWindowRgn(searchEdit_, rgn, TRUE);   // 成功后系统接管这个 rgn
 }
 
@@ -1262,10 +1295,10 @@ void IslandWindow::redraw() {
     // ⚠ 这里只画"壳"：一层提亮 + 放大镜字形。
     //   输入是搬过来的那个真 EDIT 负责的（它没有底，所以透出来的就是这层提亮）。
     //   不画占位文字 —— 标签栏那个搜索窗也没有占位。
-    const int sx = px(12);
-    const int sy = px(8);
-    const int sw = w_ - px(24);
-    const int sh = searchH_ - px(16);
+    // ★ 矩形来自唯一来源 searchBoxRect()：和 layoutSearchEdit() 用的是同一份，
+    //   从此不会出现"画在这儿、输入框摆在那儿"的错位。
+    int sx = 0, sy = 0, sw = 0, sh = 0;
+    searchBoxRect(sx, sy, sw, sh);
     if (sw > px(80) && sh > px(16)) {
         // ★ 输入框的底必须**不透明**：它是那个真 EDIT 窗口自己刷底色的，
         //   而 EDIT 只能填一个实色 —— 两边同色才零色差（下面 updateSearchBgColor 的用意）。

@@ -170,6 +170,9 @@ private:
 
     void createSearchEdit(HINSTANCE hInst);
     void layoutSearchEdit();             // 把搜索框铺到面板顶部那条
+    // ★ 顶部搜索框（提亮条）矩形的**唯一来源** —— 绘制与内嵌 EDIT 都用它，
+    //   免得两处各算一遍、改一处忘一处（这就是"文字又不对齐"的根源）。
+    void searchBoxRect(int& x, int& y, int& w, int& h) const;
     void showSearchEdit(bool show);
     void focusSearchEdit();
     void runIslandSearch();              // 防抖后真正查一次
