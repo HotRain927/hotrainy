@@ -245,13 +245,13 @@ void drawFrame() {
         //   alpha 都压低，叠起来是"发光"而不是"描边"（用户要更柔和）。
         //   每根丝线的色相在 青蓝 -> 蓝 -> 紫 之间取，外圈偏紫、内圈偏青，
         //   再沿 x 加一点色相漂移 —— 色调更丰富。
-        const int kStrands = 18;
-        const int kStep = 2;                    // 横向采样步长（配合平滑插值）
+        const int kStrands = 14;
+        const int kStep = 1;                    // 横向采样步长（1px -> 更顺）
         struct Pass { float w; uint32_t a0; uint32_t a1; };
         const Pass passes[3] = {
-            {4.5f, 0x0Eu, 0x1Cu},               // 外光晕（极淡）
-            {2.2f, 0x22u, 0x3Cu},               // 内光晕
-            {1.0f, 0x46u, 0x8Cu},               // 细芯
+            {4.5f, 0x0Eu, 0x1Cu},               // 外光晕（极淡，负责柔）
+            {2.2f, 0x30u, 0x52u},               // 内光晕
+            {1.0f, 0x66u, 0xC8u},               // 细芯（提亮 -> 清晰）
         };
         for (int pass = 0; pass < 3; ++pass) {
             for (int s = 0; s < kStrands; ++s) {
@@ -264,10 +264,11 @@ void drawFrame() {
                     const double u = x / usable;
                     // 静音时不用（几乎为 0 的）电平包络，改用固定形状的低丝带
                     const double a = maxAmp * (silent ? 1.0 : envAt(u));
-                    // 三根不同频率的正弦叠加、各根相位独立 -> 丝线互相交错
-                    const double wob = std::sin(u * 7.0 + ph) * 0.34 +
-                                       std::sin(u * 17.0 + ph * 1.9) * 0.20 +
-                                       std::sin(u * 41.0 + ph * 3.1) * 0.10;
+                    // ★ 只留两组**低频**抖动（原来还有 17x/41x，那是纯毛刺，
+                    //   让线条互相穿插抖成一团，用户反馈"不连贯、不清晰"）。
+                    //   低频保留流动感，线条仍是干净连贯的曲线。
+                    const double wob = std::sin(u * 5.0 + ph) * 0.30 +
+                                       std::sin(u * 11.0 + ph * 1.6) * 0.13;
                     double off = a * (k * 0.85 + wob * 0.55);
                     if (off < 0.0) off = 0.0;
                     // ★ 色调（用户可选 黑/白/蓝/红/黄）：每个色调由**两种十分
