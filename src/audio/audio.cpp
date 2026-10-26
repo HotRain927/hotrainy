@@ -62,8 +62,6 @@ float g_levels[kBarCount] = {};
 float g_rms = 0.0f;
 
 // 峰值保持（对照 AudioBar._peak_hold / _peak_timers）
-float g_peak[kBarCount] = {};
-int g_peakTimer[kBarCount] = {};
 int g_silentFrames = 0;
 
 int g_w = 0, g_h = 0;
@@ -499,8 +497,6 @@ void startAudioBar() {
 
     for (int i = 0; i < kBarCount; ++i) {
         g_levels[i] = 0.0f;
-        g_peak[i] = 0.0f;
-        g_peakTimer[i] = 0;
     }
     g_silentFrames = 0;
 

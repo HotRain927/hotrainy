@@ -82,7 +82,6 @@ public:
     void pollTick();
     void refreshBackdropLive();
     // 拖动/缩放**过程中**的实时重抓（面板可见，靠 WDA_EXCLUDEFROMCAPTURE 排除自己）
-    void refreshBackdropWhileDragging();
     void reloadIcons();          // 图标缓存失效（比如新加了快捷方式）
 
     // 设置文字颜色策略，跟随设置里的「文字颜色」。

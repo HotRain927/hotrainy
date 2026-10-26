@@ -469,41 +469,6 @@ void IslandWindow::refreshBackdropLive() {
     }
 }
 
-// 拖动/缩放过程中的实时重抓。
-//
-// ⚠ 和 refreshBackdropLive 的区别：
-//   那个是"藏起来→抓→显示"（适合非拖动场景）；
-//   拖动时窗口正被系统拖着，藏起来会把拖拽搞乱，
-//   所以改成"一边显示一边抓"——靠 WM_ENTERSIZEMOVE 打的
-//   WDA_EXCLUDEFROMCAPTURE 把面板和输入框排除在抓屏之外。
-void IslandWindow::refreshBackdropWhileDragging() {
-    if (!hwnd_ || !visible_) return;
-
-    RECT wr{};
-    if (!::GetWindowRect(hwnd_, &wr)) return;
-
-    // 只抓**面板当前这一块**，而且**不带 CAPTUREBLT**：
-    //   不带它时分层窗口会被排除，而面板和输入框都是分层窗口 ——
-    //   所以抓到的是"面板背后"的真实背景，抓完直接当底重烘焙。
-    //
-    // ⚠ 千万别在这里藏窗口（会中止拖动），也别抓整屏（太重会堵住拖动）。
-    // ★ 抓的是**内容**那一块（窗口多出的一圈留白不该算进来，
-    //   否则玻璃底的取样范围会偏出去一圈）。
-    const int shd = islandShadowPx();
-    RECT rc = {wr.left + shd, wr.top + shd, wr.right - shd, wr.bottom - shd};
-    Backdrop bd;
-    if (Surface::capture(rc, 0, bd, /*includeLayered=*/false)) {
-        backdrop_ = bd;
-        baseValid_ = false;
-    }
-
-    // 记账：拖动中位置一直在变，位置要跟上（窗口矩形 → 内容位置）
-    x_ = wr.left + shd;
-    y_ = wr.top + shd;
-    redraw();
-    layoutSearchEdit();     // 输入框也要跟着面板走
-}
-
 // 周期性检查（由主程序 150ms 的定时器调用）：
 // 前台窗口换了就重抓背景 —— 这就是"实时更新"。
 void IslandWindow::pollTick() {

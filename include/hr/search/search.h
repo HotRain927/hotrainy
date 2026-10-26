@@ -138,7 +138,6 @@ private:
 
     int x_ = 0, y_ = 0, w_ = 0, h_ = 0;
     bool visible_ = false;
-    bool solidOnly_ = false;      // 拖动/缩放中：只画实底
 
     std::vector<SearchHit> hits_;
     int sel_ = 0;

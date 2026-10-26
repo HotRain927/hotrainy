@@ -1502,7 +1502,6 @@ void SearchWindow::show(bool activate) {
     hotRow_ = -1;
     query_.clear();
     hint_.clear();
-    solidOnly_ = false;
     if (edit_) {
         SetWindowTextW(edit_, L"");
         ShowWindow(edit_, SW_HIDE);   // 等主窗摆好再露出来，避免闪一下孤零零的输入框
@@ -1757,7 +1756,7 @@ LRESULT SearchWindow::handle(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_NCHITTEST: {
             // ★ 与岛台同一套：把边框区域交还给**系统自己的缩放循环**。
             //   lParam 是**屏幕坐标**，先转客户区、再减掉外阴影留白得到内容坐标，
-            //   然后复用 zoneAt() 判区域。
+            //   然后自己判区域（原来复用 zoneAt()，已删除）。
             // ★ 判定坐标必须严格等于"画面里的内容坐标"，而它 =
             //   窗口左上 + 非客户区边框 + 外阴影留白。三者都要算上：
             //
@@ -1905,7 +1904,7 @@ LRESULT SearchWindow::handle(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 //   2×边框（实测 10px×2 = 20px），而 UpdateLayeredWindow 的位图
                 //   是按**窗口**尺寸贴的（psize = 内容 + 2×留白）。
                 //   用客户区尺寸会让 w_/h_ 比真实内容小 20px —— 于是右侧/下侧的
-                //   判定算出来的坐标落到 w_/h_ 之外被 zoneAt 判空，
+                //   判定算出来的坐标落到 w_/h_ 之外会被判空，
                 //   表现就是"右下角怎么拖都没反应"（实测扫描确认）。
                 RECT wr{};
                 if (!(wpos->flags & SWP_NOMOVE)) {
@@ -1959,7 +1958,6 @@ LRESULT SearchWindow::handle(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 }
                 x_ = nx;
                 y_ = ny;
-                solidOnly_ = true;
                 {
                     const int s = shadowInset();
                     SetWindowPos(hwnd, nullptr, x_ - s, y_ - s, 0, 0,
@@ -2041,7 +2039,6 @@ LRESULT SearchWindow::handle(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             dragMoved_ = false;
             if (was) {
                 ReleaseCapture();
-                solidOnly_ = false;
                 rebuildGlassOffscreen();
                 syncEntryColors();
                 if (wasResize) persistSize();

@@ -16,11 +16,11 @@ $ErrorActionPreference = "Stop"
 $RepoDir = "C:\hot_rain\cpp\hotrainy"
 $AssetZip = "C:\hot_rain\hotrainy_setup.zip"
 $AssetExe = "C:\hot_rain\hotrainy_installer.exe"
-$RelNotesFile = Join-Path $RepoDir "docs\releases\v1.0.md"
+$RelNotesFile = Join-Path $RepoDir "docs\releases\v1.7.md"
 $RepoName = "hotrainy"
 $RepoDesc = "Windows 11 任务栏真透明 + 岛台面板 + 顶部标签栏 + 音频波动条（C++ / Win32，免管理员免运行库）"
-$Tag = "v1.0"
-$RelTitle = "hotrainy v1.0 — 第一版 / first release"
+$Tag = "v1.7"
+$RelTitle = "hotrainy v1.7 — 音频波动条重做 / 标签底色收敛 / 交互修复"
 
 function Step($n, $t) { Write-Host "`n[$n] $t" -ForegroundColor Cyan }
 function Ok($m)   { Write-Host "    OK  $m" -ForegroundColor Green }
