@@ -1028,8 +1028,9 @@ int main() {
     logf("config: %s，%d 个标签，字号 %d", ok ? "读到了" : "用默认", (int)g_cfg.tabs.size(),
          g_cfg.shortcutFontSize);
 
-    // 音频条每次启动默认关闭，不读取上次状态（对照 main.py:210）
-    g_cfg.audioBar = false;
+    // ★ 不再强制关闭音频条：用户要求"下次启动时所有东西都保持上次设置的状态"，
+    //   所以 audioBar 的开关状态照配置读（原来这里无条件置 false，是照 main.py:210
+    //   的老行为 —— 那会导致"开了音频条，下次启动又没了"，与用户要求矛盾）。
 
     // 深浅固定为深色（用户要求）：不判整屏/脚下，避免奶白玻璃发白
 
@@ -1075,8 +1076,13 @@ int main() {
     // ★ 默认尺寸：横向丝带 —— 宽约 1/3 屏宽，高约其 1/8（用户要求"大概是横屏的
     //   三分之一"）。原来的"屏宽/6 × 屏高-8"是给竖条用的，换成横向丝带后
     //   高度会离谱。尺寸仍可在设置里用「音频条横向/纵向长度」调整。
-    if (g_cfg.audioBarW <= 0) g_cfg.audioBarW = std::max((int)(GetSystemMetrics(SM_CXSCREEN) / 3), 240);
-    if (g_cfg.audioBarH <= 0) g_cfg.audioBarH = std::max(g_cfg.audioBarW / 8, 80);
+    // ★ 默认尺寸/位置 = 用户当前在用的那一套（1000x392 @ 783,1175）。
+    //   注意：只在这几个值为"未设置"（W/H<=0、X/Y<0）时才套用，
+    //   用户自己调过的一律以配置为准 —— 绝不再覆盖用户数据。
+    if (g_cfg.audioBarW <= 0) g_cfg.audioBarW = 1000;
+    if (g_cfg.audioBarH <= 0) g_cfg.audioBarH = 392;
+    if (g_cfg.audioBarX < 0) g_cfg.audioBarX = 783;
+    if (g_cfg.audioBarY < 0) g_cfg.audioBarY = 1175;
     saveConfig(g_cfg);
     initAudioBar(GetModuleHandleW(nullptr));
     audioWire();    // 音频条的接线（见 src/audio/audio_wire.cpp）

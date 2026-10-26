@@ -38,6 +38,7 @@ struct Config {
     int audioBarH = 0;                      // 纵向长度（0 = 自动：屏高 2/3）
     int audioBarX = -1;                     // 拖动后的位置（-1 = 默认）
     int audioBarY = -1;
+    std::string audioTone = "black";        // 音频条色调：black/white/blue/red/yellow
     bool hoverMode = true;                  // true=悬停展开 false=点击展开
     std::string themeColor = "默认";
     bool glassMode = true;

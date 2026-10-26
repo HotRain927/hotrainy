@@ -180,6 +180,7 @@ void captureLoop() {
     static int g_posX = -1;
     static int g_posY = -1;
     static void (*g_onMoved)(int, int) = nullptr;
+    static std::string g_tone = "black";     // 色调：black/white/blue/red/yellow（默认黑）
 
 void drawFrame() {
     if (!g_hwnd || g_w <= 0 || g_h <= 0) return;
@@ -208,7 +209,10 @@ void drawFrame() {
     const double cy = g_h * 0.5;
     const int margin = 6;
     const double usable = (double)std::max(1, g_w - margin * 2);
-    const double maxAmp = std::max(2.0, g_h * 0.5 - 3.0);   // 最大半振幅
+    // ★ 静音/音量为零时**不能整条消失**（用户反馈）：此时改用一条低而清晰的
+    //   静止丝带（约窗口高的 3.5%，至少 5px），看得到但安静。
+    const double maxAmp = silent ? std::max(5.0, g_h * 0.035)
+                                 : std::max(2.0, g_h * 0.5 - 3.0);
     const double t = (double)::GetTickCount64() / 1000.0;   // 时间相位 -> 游动
 
     // 36 段电平 -> 逐像素包络。
@@ -236,7 +240,7 @@ void drawFrame() {
         return std::max(0.0, v) * taper;
     };
 
-    if (!silent) {
+    {
         // ★ 三层画法，从外到内：外光晕(4.5) -> 内光晕(2.2) -> 细芯(1.0)，
         //   alpha 都压低，叠起来是"发光"而不是"描边"（用户要更柔和）。
         //   每根丝线的色相在 青蓝 -> 蓝 -> 紫 之间取，外圈偏紫、内圈偏青，
@@ -258,31 +262,40 @@ void drawFrame() {
                 int lx = 0, lyT = 0, lyB = 0;
                 for (int x = 0; x <= (int)usable; x += kStep) {
                     const double u = x / usable;
-                    const double a = maxAmp * envAt(u);
+                    // 静音时不用（几乎为 0 的）电平包络，改用固定形状的低丝带
+                    const double a = maxAmp * (silent ? 1.0 : envAt(u));
                     // 三根不同频率的正弦叠加、各根相位独立 -> 丝线互相交错
                     const double wob = std::sin(u * 7.0 + ph) * 0.34 +
                                        std::sin(u * 17.0 + ph * 1.9) * 0.20 +
                                        std::sin(u * 41.0 + ph * 3.1) * 0.10;
                     double off = a * (k * 0.85 + wob * 0.55);
                     if (off < 0.0) off = 0.0;
-                    // ★ 七彩：色相铺满整个光谱 —— 内圈到外圈走大半圈，
-                    //   再沿 x 漂移 + 随时间缓慢流动，整条丝带就是彩虹在游。
-                    double hue = 0.02 + 0.85 * k + 0.25 * u + t * 0.05;
-                    hue -= std::floor(hue);                       // 归一到 0..1
-                    // HSV -> RGB（S=0.72, V=1.0：够艳但不刺眼）
+                    // ★ 色调（用户可选 黑/白/蓝/红/黄）：每个色调由**两种十分
+                    //   相近的色相**掺杂 —— 偶数根用主色相、奇数根用副色相，
+                    //   再沿 x 极轻微漂移，于是同一条丝带里有细腻的双色层次，
+                    //   而不是一根死色。
+                    double hueA, hueB, sat, val;
+                    if (g_tone == "black")       { hueA = 0.66; hueB = 0.60; sat = 0.12; val = 0.16; }
+                    else if (g_tone == "white")  { hueA = 0.60; hueB = 0.66; sat = 0.07; val = 1.00; }
+                    else if (g_tone == "red")    { hueA = 0.99; hueB = 0.945; sat = 0.86; val = 1.00; }
+                    else if (g_tone == "yellow") { hueA = 0.145; hueB = 0.105; sat = 0.90; val = 1.00; }
+                    else                         { hueA = 0.58; hueB = 0.635; sat = 0.82; val = 1.00; }
+                    double hue = ((s % 2 == 0) ? hueA : hueB)
+                               + 0.02 * std::sin(u * 5.0 + ph * 0.6);
+                    hue -= std::floor(hue);
                     const double hh = hue * 6.0;
                     const int isec = (int)hh;
                     const double ff = hh - isec;
-                    const double q = 1.0 * (1.0 - 0.72 * ff);
-                    const double t2 = 1.0 * (1.0 - 0.72 * (1.0 - ff));
-                    double rr = 1.0, gg = 1.0, bb = 1.0;
+                    const double q = val * (1.0 - sat * ff);
+                    const double t2 = val * (1.0 - sat * (1.0 - ff));
+                    double rr = val, gg = val, bb = val;
                     switch (isec % 6) {
-                        case 0: rr = 1.0;  gg = t2;   bb = 0.28;  break;
-                        case 1: rr = q;    gg = 1.0;  bb = 0.28;  break;
-                        case 2: rr = 0.28; gg = 1.0;  bb = t2;    break;
-                        case 3: rr = 0.28; gg = q;    bb = 1.0;   break;
-                        case 4: rr = t2;   gg = 0.28; bb = 1.0;   break;
-                        default: rr = 1.0; gg = 0.28; bb = q;     break;
+                        case 0: rr = val; gg = t2;  bb = val * (1.0 - sat); break;
+                        case 1: rr = q;   gg = val; bb = val * (1.0 - sat); break;
+                        case 2: rr = val * (1.0 - sat); gg = val; bb = t2; break;
+                        case 3: rr = val * (1.0 - sat); gg = q;   bb = val; break;
+                        case 4: rr = t2;  gg = val * (1.0 - sat); bb = val; break;
+                        default: rr = val; gg = val * (1.0 - sat); bb = q; break;
                     }
                     const uint32_t col = (alpha << 24) |
                                          ((uint32_t)std::lround(rr * 255.0) << 16) |
@@ -393,6 +406,14 @@ static void applyAudioGeometryNow() {
 }
 
 void setAudioBarMovedHook(void (*cb)(int x, int y)) { g_onMoved = cb; }
+
+// 色调：只影响绘制，立即重画一帧
+void setAudioTone(const std::string& tone) {
+    if (tone.empty() || tone == g_tone) return;
+    g_tone = tone;
+    logf("audio: 色调 = %s", g_tone.c_str());
+    drawFrame();
+}
 void setAudioBarPos(int x, int y) { g_posX = x; g_posY = y; }
 
 void setAudioBarGeometry(int w, int h) {

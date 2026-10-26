@@ -21,6 +21,8 @@ void setAudioBarMovedHook(void (*cb)(int x, int y));
 // 启动时按记忆位置摆放（-1 = 用默认位置）
 void setAudioBarPos(int x, int y);
 void setAudioBarGeometry(int w, int h);   // 方向功能已删除：固定横向丝带
+// 色调：black / white / blue / red / yellow（每个色调内含两种相近色相）
+void setAudioTone(const std::string& tone);
 
 void initAudioBar(HINSTANCE hInst);
 void startAudioBar();

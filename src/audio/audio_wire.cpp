@@ -33,9 +33,11 @@ bool audio_applySetting(const std::string& key, bool& handled) {
             stopAudioBar();
         }
     } else if (key == "audio_bar_w" || key == "audio_bar_h") {
-        // ★ 音频条尺寸/方向：只把新几何交给它原地改，绝不 stop/start
+        // ★ 音频条尺寸：只把新几何交给它原地改，绝不 stop/start
         setAudioBarGeometry(cfg().audioBarW, cfg().audioBarH);
         setAudioBarPos(cfg().audioBarX, cfg().audioBarY);
+    } else if (key == "audio_tone") {
+        setAudioTone(cfg().audioTone);
     } else {
         handled = false;
     }

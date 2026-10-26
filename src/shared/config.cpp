@@ -91,6 +91,11 @@ bool loadConfig(Config& cfg, std::vector<std::string>& warnings) {
     }
     cfg.audioBarX = clampInt(root.getNum("audioBarX", -1), -1, 20000, -1);
     cfg.audioBarY = clampInt(root.getNum("audioBarY", -1), -1, 20000, -1);
+    {
+        const std::string tn = root.getStr("audioTone", "black");
+        cfg.audioTone = (tn == "black" || tn == "white" || tn == "blue" ||
+                         tn == "red" || tn == "yellow") ? tn : "black";
+    }
 
     cfg.searchEnabled = root.getBool("searchEnabled", true);
     cfg.searchHotkey = root.getStr("searchHotkey", "Ctrl+Alt+Space");
@@ -213,6 +218,7 @@ bool saveConfig(const Config& cfg) {
     root.setNum("audioBarH", cfg.audioBarH);
     root.setNum("audioBarX", cfg.audioBarX);
     root.setNum("audioBarY", cfg.audioBarY);
+    root.setStr("audioTone", cfg.audioTone);
     root.setBool("searchEnabled", cfg.searchEnabled);
     root.setStr("searchHotkey", cfg.searchHotkey);
     root.setBool("searchFollowExplorer", cfg.searchFollow);
