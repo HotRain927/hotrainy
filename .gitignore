@@ -1,5 +1,6 @@
 # ── 构建产物 ──
 build/
+build-dbg/
 **/build/
 *.obj
 *.o
