@@ -940,6 +940,10 @@ void SettingsWindow::drawSizeRow(int xRight, int cy) {
 void SettingsWindow::redraw() {
     if (!hwnd_ || winW_ <= 0) return;
     if (frame_.width() != winW_ || frame_.height() != winH_) frame_.create(winW_, winH_);
+    // ★ 画布可能在 close() 里被 release() 掉了（内存优化）—— 这里补一次重建，
+    //   否则重新打开时 glass_ 是 0x0，分层窗口提交出去就是"看得见窗口、
+    //   看不见内容"，观感就是"设置打不开"。（用户实测就是这个。）
+    if (glass_.width() != winW_ || glass_.height() != winH_) buildGlass();
     frame_ = glass_;
     hits_.clear();
 
