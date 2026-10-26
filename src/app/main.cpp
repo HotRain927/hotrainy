@@ -1077,6 +1077,18 @@ int main() {
     //   高度会离谱。尺寸仍可在设置里用「音频条横向/纵向长度」调整。
     if (g_cfg.audioBarW <= 0) g_cfg.audioBarW = std::max((int)(GetSystemMetrics(SM_CXSCREEN) / 3), 240);
     if (g_cfg.audioBarH <= 0) g_cfg.audioBarH = std::max(g_cfg.audioBarW / 8, 80);
+    // ★ 迁移：旧版音频条是**竖条**，配置里留的是又高又窄的尺寸
+    //   （实测用户那里 2250x1542，高 > 宽）—— 横向丝带套那套尺寸就是一块巨幕。
+    //   凡是「高 > 宽」一律当旧值，重置成新的丝带尺寸与默认位置
+    //   （原来存的 (56,0) 也是竖条时代留下的）。
+    if (g_cfg.audioBarH > g_cfg.audioBarW) {
+        g_cfg.audioBarW = std::max((int)(GetSystemMetrics(SM_CXSCREEN) / 3), 240);
+        g_cfg.audioBarH = std::max(g_cfg.audioBarW / 8, 80);
+        g_cfg.audioBarX = -1;
+        g_cfg.audioBarY = -1;
+        saveConfig(g_cfg);
+        logf("audio: 迁移旧竖条尺寸 -> %dx%d（默认靠下）", g_cfg.audioBarW, g_cfg.audioBarH);
+    }
     saveConfig(g_cfg);
     initAudioBar(GetModuleHandleW(nullptr));
     audioWire();    // 音频条的接线（见 src/audio/audio_wire.cpp）

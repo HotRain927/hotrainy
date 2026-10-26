@@ -106,19 +106,22 @@ void captureLoop() {
             if (SUCCEEDED(vol->GetMasterVolumeLevelScalar(&m))) peak *= m;
         }
 
-        // 生成参差不齐的频段模拟（对照 _meter_loop 的 base + jitter）
+        // ★ 频段模拟（第二版）：真 WASAPI 只给一个总峰值，原来的"斜坡 + jitter"
+        //   让 36 段几乎一样高 —— 画出来是平滑月牙，没有波峰波谷（用户反馈）。
+        //   改成**随时间演化的多正弦场**：三组不同频率/相位的行波叠加，峰谷
+        //   明显且缓慢流动；两端略收，更像声波包络；整体乘真实总峰值，于是
+        //   有声音才起伏、静音时收成一根细线。
+        const double nowS = (double)::GetTickCount64() / 1000.0;
         float levels[kBarCount];
         for (int i = 0; i < kBarCount; ++i) {
-            float base;
-            if (i < kBarCount * 0.3f) {
-                base = 1.0f;
-            } else if (i < kBarCount * 0.65f) {
-                base = 1.0f - ((i - kBarCount * 0.3f) / (float)kBarCount) * 0.6f;
-            } else {
-                base = 0.4f - ((i - kBarCount * 0.65f) / (float)kBarCount) * 0.35f;
-            }
-            float s = std::max(0.0f, base + jitter(rng));
-            levels[i] = std::min(std::max(peak * s, 0.0f), 1.0f);
+            const double u = (double)i / (double)(kBarCount - 1);
+            double f = 0.55
+                     + 0.30 * std::sin(u * 6.0 - nowS * 1.1)
+                     + 0.18 * std::sin(u * 13.0 + nowS * 0.7 + 1.3)
+                     + 0.10 * std::sin(u * 27.0 - nowS * 1.9 + 2.6);
+            f *= 0.55 + 0.45 * std::sin(3.14159265358979 * u);
+            f = std::max(0.0, std::min(1.0, f));
+            levels[i] = (float)std::min(1.0, (double)peak * (0.5 + 0.7 * f));
         }
 
         {
@@ -202,54 +205,92 @@ void drawFrame() {
     const double maxAmp = std::max(2.0, g_h * 0.5 - 3.0);   // 最大半振幅
     const double t = (double)::GetTickCount64() / 1000.0;   // 时间相位 -> 游动
 
-    // 36 段电平 -> 逐像素包络（线性插值 + 两端渐尖）
+    // 36 段电平 -> 逐像素包络。
+    // ★ 用 Catmull-Rom 平滑插值（原来是线性，24px 一段的折角肉眼可见 ——
+    //   用户反馈"不够连贯"），再叠两端渐尖。
+    auto sample = [&](int i) {
+        if (i < 0) i = 0;
+        if (i >= kBarCount) i = kBarCount - 1;
+        return (double)levels[i];
+    };
     auto envAt = [&](double u) {
         const double f = u * (kBarCount - 1);
-        const int i0 = (int)f;
-        const int i1 = std::min(i0 + 1, kBarCount - 1);
-        const double fr = f - i0;
-        const double v = levels[i0] * (1.0 - fr) + levels[i1] * fr;
+        const int i1 = (int)f;
+        const double fr = f - i1;
+        const double p0 = sample(i1 - 1), p1 = sample(i1);
+        const double p2 = sample(i1 + 1), p3 = sample(i1 + 2);
+        // Catmull-Rom
+        const double v = 0.5 * ((2.0 * p1) +
+                                (-p0 + p2) * fr +
+                                (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * fr * fr +
+                                (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * fr * fr * fr);
         const double taper = std::sin(3.14159265358979 * u);
-        return v * taper * taper;      // 两端收成细线
+        return std::max(0.0, v) * taper * taper;      // 两端收成细线
     };
 
     if (!silent) {
-        // ★ 每根丝线画两遍：粗而极淡的"光晕" + 细而亮的"芯" ——
-        //   叠加起来就有视频里那种辉光感（source-over 不会自发增亮）。
-        const int kStrands = 20;
-        const uint32_t haloCol = 0x166E8CFFu;                  // 光晕（很淡）
-        int px = 0, pyT = 0, pyB = 0, hx = 0, hyT = 0, hyB = 0;
-        for (int pass = 0; pass < 2; ++pass) {
-            const bool halo = (pass == 0);
+        // ★ 三层画法，从外到内：外光晕(4.5) -> 内光晕(2.2) -> 细芯(1.0)，
+        //   alpha 都压低，叠起来是"发光"而不是"描边"（用户要更柔和）。
+        //   每根丝线的色相在 青蓝 -> 蓝 -> 紫 之间取，外圈偏紫、内圈偏青，
+        //   再沿 x 加一点色相漂移 —— 色调更丰富。
+        const int kStrands = 18;
+        const int kStep = 2;                    // 横向采样步长（配合平滑插值）
+        struct Pass { float w; uint32_t a0; uint32_t a1; };
+        const Pass passes[3] = {
+            {4.5f, 0x0Eu, 0x1Cu},               // 外光晕（极淡）
+            {2.2f, 0x22u, 0x3Cu},               // 内光晕
+            {1.0f, 0x46u, 0x8Cu},               // 细芯
+        };
+        for (int pass = 0; pass < 3; ++pass) {
             for (int s = 0; s < kStrands; ++s) {
                 const double k = (s + 1) / (double)kStrands;   // 由内到外
                 const double ph = t * (0.7 + 0.5 * k) + s * 2.3;
-                const uint32_t alpha = halo ? 0u
-                                      : (uint32_t)(70 + 110 * k);
-                const uint32_t col = halo ? haloCol : ((alpha << 24) | 0x7E9CFFu);
+                const uint32_t alpha = (uint32_t)(passes[pass].a0 +
+                                                  (passes[pass].a1 - passes[pass].a0) * k);
                 int lx = 0, lyT = 0, lyB = 0;
-                for (int x = 0; x <= (int)usable; ++x) {
+                for (int x = 0; x <= (int)usable; x += kStep) {
                     const double u = x / usable;
                     const double a = maxAmp * envAt(u);
-                    // ★ 三根不同频率的正弦叠加，且各根相位独立 —— 让丝线**交错**，
-                    //   而不是一圈圈同心嵌套（视频里的"发丝"感就来自交错）。
+                    // 三根不同频率的正弦叠加、各根相位独立 -> 丝线互相交错
                     const double wob = std::sin(u * 7.0 + ph) * 0.34 +
                                        std::sin(u * 17.0 + ph * 1.9) * 0.20 +
                                        std::sin(u * 41.0 + ph * 3.1) * 0.10;
                     double off = a * (k * 0.85 + wob * 0.55);
                     if (off < 0.0) off = 0.0;
+                    // ★ 七彩：色相铺满整个光谱 —— 内圈到外圈走大半圈，
+                    //   再沿 x 漂移 + 随时间缓慢流动，整条丝带就是彩虹在游。
+                    double hue = 0.02 + 0.85 * k + 0.25 * u + t * 0.05;
+                    hue -= std::floor(hue);                       // 归一到 0..1
+                    // HSV -> RGB（S=0.72, V=1.0：够艳但不刺眼）
+                    const double hh = hue * 6.0;
+                    const int isec = (int)hh;
+                    const double ff = hh - isec;
+                    const double q = 1.0 * (1.0 - 0.72 * ff);
+                    const double t2 = 1.0 * (1.0 - 0.72 * (1.0 - ff));
+                    double rr = 1.0, gg = 1.0, bb = 1.0;
+                    switch (isec % 6) {
+                        case 0: rr = 1.0;  gg = t2;   bb = 0.28;  break;
+                        case 1: rr = q;    gg = 1.0;  bb = 0.28;  break;
+                        case 2: rr = 0.28; gg = 1.0;  bb = t2;    break;
+                        case 3: rr = 0.28; gg = q;    bb = 1.0;   break;
+                        case 4: rr = t2;   gg = 0.28; bb = 1.0;   break;
+                        default: rr = 1.0; gg = 0.28; bb = q;     break;
+                    }
+                    const uint32_t col = (alpha << 24) |
+                                         ((uint32_t)std::lround(rr * 255.0) << 16) |
+                                         ((uint32_t)std::lround(gg * 255.0) << 8) |
+                                         (uint32_t)std::lround(bb * 255.0);
                     const int X = margin + x;
                     const int YT = (int)std::lround(cy - off);
                     const int YB = (int)std::lround(cy + off);
-                    if (x > 0) {
-                        g_frame.drawLine(lx, lyT, X, YT, col, halo ? 2.6f : 1.0f);
-                        g_frame.drawLine(lx, lyB, X, YB, col, halo ? 2.6f : 1.0f);
+                    if (lx > 0 || x > 0) {
+                        g_frame.drawLine(lx, lyT, X, YT, col, passes[pass].w);
+                        g_frame.drawLine(lx, lyB, X, YB, col, passes[pass].w);
                     }
                     lx = X; lyT = YT; lyB = YB;
                 }
             }
         }
-        (void)px; (void)pyT; (void)pyB; (void)hx; (void)hyT; (void)hyB;
     }
 
     // 中轴：稍亮的一条细线（静音时它就是那根"细线"）
