@@ -2070,7 +2070,11 @@ layoutSearchEdit();     // 搜索框位置跟上就行
                 y_ = wp->y;
             }
 
-            if (!animating) {
+            if (!animating && !winDragging_) {
+                // ★ 手写窗口拖动（纯移动）时**跳过**：内容尺寸没变 ->
+                //   图标/格子坐标不用重算；输入框也由拖动分支每帧自己重摆了，
+                //   在这里再摆一次是重复劳动。
+                //   （缩放走的是 WM_SIZING，那条路仍然会正常重排。）
                 layout();
                 layoutSearchEdit();     // 面板动了，搜索框要跟着
             }
