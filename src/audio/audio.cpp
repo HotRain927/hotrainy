@@ -435,12 +435,18 @@ static void applyAudioGeometryNow() {
     int barY = (g_posY >= 0) ? g_posY : (sh - barH) - sh / 12;   // remembered position
     if (barY < 0) barY = 0;
     if (barY + barH > sh) barY = std::max(0, sh - barH);   // 整窗留在屏幕上
+    // ★ 横向位置也要恢复（用户："重启之后不在上次的位置"）。
+    //   原来这里把 X 写死成 0，所以每次都跳到屏幕最左边 ——
+    //   配置里的 audioBarX 被完全忽略（拖动时明明存下来了）。
+    int barX = (g_posX >= 0) ? g_posX : (sw - barW) / 2;   // 没记录过就水平居中
+    if (barX < 0) barX = 0;
+    if (barX + barW > sw) barX = std::max(0, sw - barW);   // 整窗留在屏幕上
     g_w = barW;
     g_h = barH;
-    ::SetWindowPos(g_hwnd, nullptr, 0, barY, barW, barH,
+    ::SetWindowPos(g_hwnd, nullptr, barX, barY, barW, barH,
                    SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW);
     ::InvalidateRect(g_hwnd, nullptr, FALSE);
-    logf("audio: 原地应用几何 %dx%d @y=%d", barW, barH, barY);
+    logf("audio: 原地应用几何 %dx%d @(%d,%d)", barW, barH, barX, barY);
 }
 
 void setAudioBarMovedHook(void (*cb)(int x, int y)) { g_onMoved = cb; }
@@ -484,11 +490,17 @@ void startAudioBar() {
     int barY = (g_posY >= 0) ? g_posY : (sh - barH) - sh / 12;   // remembered position
     if (barY < 0) barY = 0;
     if (barY + barH > sh) barY = std::max(0, sh - barH);   // 整窗留在屏幕上
+    // ★ 横向位置也要恢复（用户："重启之后不在上次的位置"）。
+    //   原来这里把 X 写死成 0，所以每次都跳到屏幕最左边 ——
+    //   配置里的 audioBarX 被完全忽略（拖动时明明存下来了）。
+    int barX = (g_posX >= 0) ? g_posX : (sw - barW) / 2;   // 没记录过就水平居中
+    if (barX < 0) barX = 0;
+    if (barX + barW > sw) barX = std::max(0, sw - barW);   // 整窗留在屏幕上
     g_w = barW;
     g_h = barH;
 
     g_hwnd = CreateWindowExW(WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
-                             kClass, L"", WS_POPUP, 0, barY, barW, barH, nullptr, nullptr,
+                             kClass, L"", WS_POPUP, barX, barY, barW, barH, nullptr, nullptr,
                              g_hinst, nullptr);
     if (!g_hwnd) {
         logf("audio: 创建窗口失败 %lu", (unsigned long)GetLastError());
@@ -506,7 +518,7 @@ void startAudioBar() {
 
     SetTimer(g_hwnd, 1, 30, nullptr);
     ShowWindow(g_hwnd, SW_SHOW);
-    logf("audio: 波动条开 %dx%d @(0,%d)", barW, barH, barY);
+    logf("audio: 波动条开 %dx%d @(%d,%d)", barW, barH, barX, barY);
 }
 
 void stopAudioBar() {
