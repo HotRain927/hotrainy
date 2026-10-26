@@ -549,14 +549,22 @@ bool Surface::buildCard(const Backdrop& bd, bool dark, int radius, int blur, int
 //   setDark(taskbarTextColor) 带成了浅色。
 void Surface::fillFog(int opacityPercent, int radius, bool dark) {
     if (width() <= 0 || height() <= 0) return;
+    fillFogRect(0, 0, w_, h_, radius, opacityPercent, dark);
+}
+
+// ★ 只填"一块"雾（同样的配色）。标签栏用它给**每个标签/图标格各自**填雾，
+//   这样底色被收进各自的圆角边框里，不会横贯整条栏跑到框外（用户反馈）。
+void Surface::fillFogRect(int x, int y, int w, int h, int radius,
+                          int opacityPercent, bool dark) {
+    if (width() <= 0 || height() <= 0) return;
     int p = opacityPercent;
     if (p < 0) p = 0;
     if (p > 100) p = 100;
-    if (p <= 0) return;
+    if (p <= 0 || w <= 0 || h <= 0) return;
     const uint32_t fogRgb = dark ? 0x00101216u : 0x00F1F3F7u;   // 只取 RGB
-    const int maxA = dark ? 0xDCu : 0xBEu;                       // 100% 时的雾浓度（深 220 / 浅 190，用户要求再浓一点）
+    const int maxA = dark ? 0xDCu : 0xBEu;                       // 100% 时的雾浓度（深 220 / 浅 190）
     const uint32_t col = ((uint32_t)(maxA * p / 100) << 24) | fogRgb;
-    fillRoundRect(0, 0, w_, h_, radius, col);
+    fillRoundRect(x, y, w, h, radius, col);
 }
 
 void Surface::buildFlatPanel(int opacityPercent, int radius, bool dark) {

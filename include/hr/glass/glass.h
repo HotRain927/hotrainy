@@ -158,6 +158,9 @@ public:
     //   buildFlatPanel = fillFog + 边框；标签栏只要雾、不要边框，
     //   所以单独抽出来（那条横贯全屏的黑线是用户要求删掉的）。
     void fillFog(int opacityPercent, int radius, bool dark);
+    // 只填一块雾（标签栏用它逐标签填，让底色收进各自的边框内）
+    void fillFogRect(int x, int y, int w, int h, int radius,
+                     int opacityPercent, bool dark);
 
     // 设置玻璃的不透明度（0.0 = 全透，1.0 = 完全不透明）。
     //

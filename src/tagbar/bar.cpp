@@ -341,12 +341,30 @@ void BarWindow::rebuildBase() {
     //     否则标签点不动、也悬停不了。
     base_.clear();
 
-    // ★ 主体也跟着「面板透明度」雾化（用户："同时标签那里也要跟着变化哦"）——
-    //   和三个面板走**同一个** fillFog，所以颜色浓度天然一致。
-    //   ⚠ 这里只取雾，**不画边框**：栏的那圈边框仍然交给每个标签/图标各自画
-    //     （见上面那条说明；横贯全屏的黑线是明确要求删掉的）。
-    //   radius 传 0：栏是横贯屏幕的一条，不需要圆角。
-    base_.fillFog(cfg_ ? cfg_->panelOpacity : 0, 0, dark_);
+    // ★ 主体跟着「面板透明度」雾化，但**只在每个标签/图标格自己的边框内**
+    //   （用户："标签的那个背景色能不能仅仅局限在每个标签的边框内"）。
+    //
+    //   原来是一整条 fillFog(op, 0, dark_)：底色横贯整条栏，跑到每个标签的
+    //   边框外面（标签之间那几像素缝里也有底色）。
+    //   现在逐格填 —— 用的还是同一套配色（fillFogRect 与 fillFog 同色），
+    //   所以浓度/颜色和三个面板天然一致；边框仍由 redraw 逐格 strokeGlassEdge。
+    //   ⚠ 格子之间的缝从此是**全透明**的；命中区由 redraw 里的
+    //     ensureHitTestableArea() 补回来（那条说明见上）。
+    const int fogP = cfg_ ? cfg_->panelOpacity : 0;
+    if (fogP > 0) {
+        const int tabR = px(4);              // 与 redraw 里标签边框同一个圆角
+        const int boxY = 1, boxH = height_ - 2;
+        for (const RECT& r : tabRects_) {
+            const int bw = r.right - r.left;
+            if (bw <= 8 || boxH <= 8) continue;
+            base_.fillFogRect(r.left, boxY, bw, boxH, tabR, fogP, dark_);
+        }
+        for (int i = 0; i < ICON_COUNT; ++i) {
+            const int bx = iconsStart_ + i * iconW_;
+            if (iconW_ <= 8 || boxH <= 8) continue;
+            base_.fillFogRect(bx, boxY, iconW_, boxH, tabR, fogP, dark_);
+        }
+    }
 }
 
 void BarWindow::redraw() {
