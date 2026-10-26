@@ -316,8 +316,10 @@ void drawFrame() {
                                          ((uint32_t)std::lround(gg * 255.0) << 8) |
                                          (uint32_t)std::lround(bb * 255.0);
                     const int X = margin + x;
-                    const int YT = (int)std::lround(cy - off);
-                    const int YB = (int)std::lround(cy + off);
+                    // ★ 上下不对称（用户：不要上下对称，上面比下面浮动大）：
+                    //   上半个丝带用完整振幅，下半个压到 40%。
+                    const int YT = (int)std::lround(cy - off * 1.00);
+                    const int YB = (int)std::lround(cy + off * 0.40);
                     if (lx > 0 || x > 0) {
                         // 静音那三条再细一档
                         const float lw = passes[pass].w * (silent ? 0.32f : 1.0f);
