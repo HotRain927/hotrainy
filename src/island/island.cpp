@@ -1320,23 +1320,18 @@ void IslandWindow::redraw() {
     int sx = 0, sy = 0, sw = 0, sh = 0;
     searchBoxRect(sx, sy, sw, sh);
     if (sw > px(80) && sh > px(16)) {
-        // ★ 框内 = **比面板雾更浓一档的雾**，不是不透明纯色。
+        // ★ 框内**不再另外填色**：岛台那层雾直接透上来。
         //
-        //   真 EDIT 本来就是透明的（WM_CTLCOLOREDIT 返回 NULL_BRUSH，只有输入法
-        //   组合时才临时给一块实色底，见 islandSearchEditProc），所以框内看到的那块
-        //   颜色完全由这里决定。
+        //   为什么（用户：还是不透明呀，这个东西还是黑底）：
+        //   框内任何一层填充都是**叠在岛台的雾之上**的，两层覆盖相乘 ——
+        //   岛台本身 76%（能透出壁纸），再叠一层 89% 就变成 97%，
+        //   于是框看起来就是一块死黑的板。数学上比周围更浓和能透出壁纸
+        //   在叠加模型里是互斥的：只要多盖一层，透过的光就按比例减少。
+        //   所以这里只保留那圈玻璃边（strokeGlassEdge）来界定输入框 ——
+        //   框的透明度从此与岛台完全一致，不再是黑底。
         //
-        //   面板雾的 alpha = panelOpacity% x maxA(200)；这里取"面板雾 + 34"，
-        //   钳在 180..240 —— 于是框内是"同一层玻璃、更浓一点"，
-        //   壁纸的明暗依然能透进来（用户要的就是这个观感）。
-        const int panelPct = cfg_ ? cfg_->panelOpacity : 90;
-        int boxA = panelPct * 200 / 100 + 34;
-        if (boxA > 240) boxA = 240;
-        if (boxA < 180) boxA = 180;
-        // 颜色取雾本身的中性色（与 Surface::fillFog 同一套），只是 alpha 更高。
-        const uint32_t fogRgb = dark_ ? 0x00101216u : 0x00F1F3F7u;
-        const uint32_t boxCol = ((uint32_t)boxA << 24) | fogRgb;
-        frame_.fillRoundRect(sx, sy, sw, sh, sh / 2, boxCol);
+        //   （输入法组合串那层临时实色底仍由 updateSearchBgColor 取像素，
+        //     现在取到的就是岛台雾本身的颜色，色差依旧为零。）
         // 一圈细玻璃边，让它看起来是个输入框而不是一块黑板
         frame_.strokeGlassEdge(sx, sy, sw, sh, sh / 2, dark_, 1.0);
 
