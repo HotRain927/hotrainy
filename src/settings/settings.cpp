@@ -455,8 +455,8 @@ LRESULT SettingsWindow::handle(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             dragging_ = false;
             pendingCb_ = nullptr;
             hits_.clear();
-            glass_.clear();
-            frame_.clear();
+            glass_.release();   // 真正归还内存（clear 只清零）
+            frame_.release();
             hwnd_ = nullptr;
             logf("settings: 已关闭");
             return 0;
@@ -491,7 +491,7 @@ void SettingsWindow::buildGlass() {
     const int s = shadowInset();
     if (shadow_.width() != winW_ + s * 2 || shadow_.height() != winH_ + s * 2) {
         shadow_.create(winW_ + s * 2, winH_ + s * 2);
-        shadow_.clear();
+        shadow_.release();
         RECT content = {s, s, s + winW_, s + winH_};
         shadow_.applyOuterShadow(content, radius, dark_, px(2));
     }

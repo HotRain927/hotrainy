@@ -196,6 +196,12 @@ void HoverPanel::hide() {
     hoverRow_ = -1;
     scrollRow_ = 0;
     baseValid_ = false;
+    // ★ 收起时把四张画布的内存真正还回去（用户反馈内存占用偏高）。
+    //   这里不会增加代价：baseValid_ 已经置假，下次展开本来就要重烘焙。
+    base_.release();
+    frame_.release();
+    shadow_.release();
+    outer_.release();
     logf("panel: 收起");
 }
 

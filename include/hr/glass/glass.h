@@ -51,6 +51,9 @@ class Surface {
 public:
     bool create(int w, int h);
     void clear();
+    // ★ 真正把像素内存还回去（clear() 只是清零，内存仍占着）。
+    //   尺寸/内容随之为空，下次使用前需要重新 create() + 重绘。
+    void release();
     int width() const { return w_; }
     int height() const { return h_; }
     const std::vector<uint32_t>& pixels() const { return px_; }

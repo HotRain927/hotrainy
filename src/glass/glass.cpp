@@ -385,6 +385,14 @@ bool Surface::create(int w, int h) {
 
 void Surface::clear() { std::fill(px_.begin(), px_.end(), 0u); }
 
+// ★ 归还内存：clear() 只清零（w_*h_*4 字节仍然占着），隐藏窗口时用它。
+void Surface::release() {
+    px_.clear();
+    px_.shrink_to_fit();
+    w_ = 0;
+    h_ = 0;
+}
+
 bool Surface::capture(const RECT& rc, int offsetY, Backdrop& out, bool includeLayered) {
     int w = rc.right - rc.left;
     int h = rc.bottom - rc.top;

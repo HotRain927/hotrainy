@@ -325,6 +325,17 @@ void IslandWindow::hide() {
     }
     if (!hwnd_) return;
 
+    // ★ 收起时释放"提交用"的画布与缓存位图（各 6 MB 上下）。
+    //   **保留 shadow_**：那是逐像素距离场烘焙出来的外阴影、只跟尺寸有关，
+    //   重建最贵；而且它与窗口尺寸绑定，留着下次显示还能直接复用。
+    frame_.release();
+    outer_.release();
+    if (cachedBmp_) {
+        ::DeleteObject(cachedBmp_);
+        cachedBmp_ = nullptr;
+    }
+    contentDirty_ = true;
+
     // ★ 面板收起时，把正在打开的菜单（电源/右键）一起关掉。
     //
     //   菜单是**模态**的（showGlassMenu 阻塞在它自己的消息循环里），

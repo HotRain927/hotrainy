@@ -479,7 +479,7 @@ PyForms pyFormsCached(const std::wstring& name) {
     PyForms f;
     pinyinForms(name, f);
     std::lock_guard<std::mutex> lk(g_pyMtx);
-    if (g_pyCache.size() > 80000) g_pyCache.clear();   // 兜底：别无限长
+    if (g_pyCache.size() > 12000) g_pyCache.clear();   // 兜底：别无限长（原 80000 太占内存）
     g_pyCache.emplace(name, f);
     return f;
 }
@@ -1550,6 +1550,11 @@ void SearchWindow::hide() {
     attached_ = nullptr;
     attachedDialog_ = false;
     autoMode_ = false;
+    // ★ 收起时释放画布（搜索窗不常开，下次显示重烘焙即可）
+    glass_.release();
+    frame_.release();
+    shadow_.release();
+    outer_.release();
     logf("search: 收起");
 }
 
