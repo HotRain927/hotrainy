@@ -118,16 +118,16 @@ void captureLoop() {
             const double u = (double)i / (double)(kBarCount - 1);
             // ★ 沿线起伏：四组行波叠加（频率依次升高）—— 沿 x 出 3~5 个明显
             //   的峰谷，而且整体缓慢流动。这里**不再**乘拱形，否则拱会盖掉起伏。
-            double f = 0.50
-                     + 0.30 * std::sin(u * 9.0 - nowS * 1.10)
-                     + 0.22 * std::sin(u * 17.0 + nowS * 0.75 + 1.3)
-                     + 0.14 * std::sin(u * 33.0 - nowS * 1.90 + 2.6)
-                     + 0.08 * std::sin(u * 61.0 + nowS * 2.70 + 0.7);
+            // ★ 幅度更明显（用户要求）
+            double f = 0.46
+                     + 0.34 * std::sin(u * 9.0 - nowS * 1.10)
+                     + 0.26 * std::sin(u * 17.0 + nowS * 0.75 + 1.3)
+                     + 0.16 * std::sin(u * 33.0 - nowS * 1.90 + 2.6)
+                     + 0.10 * std::sin(u * 61.0 + nowS * 2.70 + 0.7);
             f = std::max(0.0, std::min(1.0, f));
-            // ★ 中轴最高：温和圆顶，只决定整体趋势（两端约 0.45，中间 1.0，
-            //   比之前的 sin^2 拱平缓得多，起伏能透出来）。
-            const double dome = 0.45 + 0.55 * std::sin(kPi * u);
-            levels[i] = (float)std::min(1.0, (double)peak * dome * (0.55 + 0.85 * f));
+            // ★ 中间更高、两端更低（圆顶更陡：两端 0.28、中间 1.0）
+            const double dome = 0.28 + 0.72 * std::sin(kPi * u);
+            levels[i] = (float)std::min(1.0, (double)peak * dome * (0.42 + 0.92 * f));
         }
 
         {
@@ -211,7 +211,7 @@ void drawFrame() {
     const double usable = (double)std::max(1, g_w - margin * 2);
     // ★ 静音/音量为零时**不能整条消失**（用户反馈）：此时改用一条低而清晰的
     //   静止丝带（约窗口高的 3.5%，至少 5px），看得到但安静。
-    const double maxAmp = silent ? std::max(5.0, g_h * 0.035)
+    const double maxAmp = silent ? std::max(2.5, g_h * 0.010)
                                  : std::max(2.0, g_h * 0.5 - 3.0);
     const double t = (double)::GetTickCount64() / 1000.0;   // 时间相位 -> 游动
 
@@ -236,7 +236,7 @@ void drawFrame() {
                                 (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * fr * fr * fr);
         // ★ 只把最两端收成细线：原来是 sin^2（等于又叠了一层拱，把沿线起伏
         //   一起压平了），改成 sqrt(sin) —— 中间绝大部分宽度不被压。
-        const double taper = std::sqrt(std::max(0.0, std::sin(3.14159265358979 * u)));
+        const double taper = std::pow(std::max(0.0, std::sin(3.14159265358979 * u)), 0.85);   // 边缘更细
         return std::max(0.0, v) * taper;
     };
 
@@ -245,18 +245,22 @@ void drawFrame() {
         //   alpha 都压低，叠起来是"发光"而不是"描边"（用户要更柔和）。
         //   每根丝线的色相在 青蓝 -> 蓝 -> 紫 之间取，外圈偏紫、内圈偏青，
         //   再沿 x 加一点色相漂移 —— 色调更丰富。
-        const int kStrands = 10;                // 根数少一点，避免叠成一条粗带
+        // 静音 3 条平直细线；有声 11 根（用户指定），alpha 与颜色按同一条
+        // 线性梯度从内到外均匀变淡。
+        const int kStrands = silent ? 3 : 11;
         const int kStep = 1;                    // 横向采样步长（1px -> 更顺）
         // ★ 几何还原成第一版那套细线条（用户在"变粗"之后要求改回来）；
         //   变淡方向保留"内亮外淡"，并把跨度拉大 —— 最外圈 alpha 归 0，
         //   于是看起来是一层层往外化掉。
+        // ⚠ 宽度是**逐层**的，同一层里所有丝线宽度完全一致 ——
+        //   "越向外越淡"只靠 alpha 与颜色（饱和度/亮度），**绝不靠变细**
+        //   （用户明确否掉"越向外线越细"）。
         struct Pass { float w; uint32_t a0; uint32_t a1; };
-        const Pass passes[3] = {
-            {4.5f, 0x1Cu, 0x00u},               // 外光晕：内 0x1C -> 外 0x00（化掉）
-            {2.2f, 0x5Au, 0x0Au},               // 内光晕：内 0x5A -> 外 0x0A
-            {1.0f, 0xFFu, 0x3Cu},               // 细芯：  内 0xFF -> 外 0x3C（强对比）
+        const Pass passes[2] = {
+            {1.0f, 0x14u, 0x00u},               // 柔光：内 0x14 -> 外 0x00（极淡）
+            {0.6f, 0xF0u, 0x08u},               // 线芯：内 0xF0 -> 外 0x08
         };
-        for (int pass = 0; pass < 3; ++pass) {
+        for (int pass = 0; pass < 2; ++pass) {
             for (int s = 0; s < kStrands; ++s) {
                 const double k = (s + 1) / (double)kStrands;   // 由内到外
                 const double ph = t * (0.7 + 0.5 * k) + s * 2.3;
@@ -270,8 +274,10 @@ void drawFrame() {
                     // ★ 只留两组**低频**抖动（原来还有 17x/41x，那是纯毛刺，
                     //   让线条互相穿插抖成一团，用户反馈"不连贯、不清晰"）。
                     //   低频保留流动感，线条仍是干净连贯的曲线。
-                    const double wob = std::sin(u * 5.0 + ph) * 0.30 +
-                                       std::sin(u * 11.0 + ph * 1.6) * 0.13;
+                    // ★ 抖动（让丝线互相交错）；静音那三条要平直，所以归零
+                    const double wob = silent ? 0.0
+                        : (std::sin(u * 5.0 + ph) * 0.30 +
+                           std::sin(u * 11.0 + ph * 1.6) * 0.13);
                     double off = a * (k * 0.85 + wob * 0.55);
                     if (off < 0.0) off = 0.0;
                     // ★ 色调（用户可选 黑/白/蓝/红/黄）：每个色调由**两种十分
@@ -313,8 +319,10 @@ void drawFrame() {
                     const int YT = (int)std::lround(cy - off);
                     const int YB = (int)std::lround(cy + off);
                     if (lx > 0 || x > 0) {
-                        g_frame.drawLine(lx, lyT, X, YT, col, passes[pass].w);
-                        g_frame.drawLine(lx, lyB, X, YB, col, passes[pass].w);
+                        // 静音那三条再细一档
+                        const float lw = passes[pass].w * (silent ? 0.32f : 1.0f);
+                        g_frame.drawLine(lx, lyT, X, YT, col, lw);
+                        g_frame.drawLine(lx, lyB, X, YB, col, lw);
                     }
                     lx = X; lyT = YT; lyB = YB;
                 }
