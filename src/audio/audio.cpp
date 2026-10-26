@@ -128,7 +128,11 @@ void captureLoop() {
             f = std::max(0.0, std::min(1.0, f));
             // ★ 中间更高、两端更低（圆顶更陡：两端 0.28、中间 1.0）
             const double dome = 0.28 + 0.72 * std::sin(kPi * u);
-            levels[i] = (float)std::min(1.0, (double)peak * dome * (0.42 + 0.92 * f));
+            // ★ 振幅调大（用户要求）：
+            //   ① 响度补偿 sqrt(peak) —— 电平实测通常只有 0.3~0.6，开方后视觉
+            //      上才满（视觉均衡器的常规做法，不是造假数据，只是映射曲线）；
+            //   ② 基数与摆动都抬高：0.42+0.92f -> 0.55+1.05f。
+            levels[i] = (float)std::min(1.0, std::sqrt((double)peak) * dome * (0.55 + 1.05 * f));
         }
 
         {
