@@ -137,6 +137,7 @@ bool tagbar_applySetting(const std::string& key, bool& handled) {
         bar().onConfigChanged();
         panel().onConfigChanged();
         island().refreshAppearance();
+        search().refreshAppearance();   // ★ 搜索窗也要跟着滑块走
     } else if (key == "glass_mode" || key == "wallpaper_mode") {
         hidePanelWire();
         bar().refreshBackdrop(true);
@@ -145,6 +146,7 @@ bool tagbar_applySetting(const std::string& key, bool& handled) {
         // ★ 岛台面板也得跟着变 —— 原来只通知了标签栏和标签面板，
         //   结果关掉玻璃后岛台还是旧样子（用户说的"透明不实时更新"）。
         island().refreshAppearance();
+        search().refreshAppearance();   // ★ 搜索窗同理
     } else if (key == "shortcut_font_size") {
         panel().setFontSize(cfg().shortcutFontSize);
         panel().onConfigChanged();

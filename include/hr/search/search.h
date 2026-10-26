@@ -67,6 +67,10 @@ public:
     std::function<void(HWND)> onAutoClosed;
 
     // 设置里改了索引范围/目录/开关后调用
+    // 设置里的面板透明度 / 外观变了 → 重烘焙雾化底并重出帧
+    // （原来没人通知搜索窗，所以它一直是老样子、不跟着滑块走）。
+    void refreshAppearance();
+
     void reloadIndex();
     bool indexReady() const;
     int indexCount() const;

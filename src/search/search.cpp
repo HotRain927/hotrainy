@@ -994,32 +994,34 @@ void SearchWindow::place(bool autoOnly) {
 
 // ── 玻璃 ────────────────────────────────────────
 
+// 设置里的面板透明度 / 外观变了 → 重烘焙雾化底并重出帧。
+// （和标签栏、标签面板、岛台同一个入口名，方便在 applySetting 里统一通知。）
+void SearchWindow::refreshAppearance() {
+    if (!hwnd_) return;
+    buildGlass();
+    if (visible_) redraw();
+}
+
 void SearchWindow::buildGlass() {
     glass_.create(w_, h_);
-    int r = px(kRadius);
-    Backdrop bd;
-    RECT rc = {x_, y_, x_ + w_, y_ + h_};
-    if (!Surface::capture(rc, 0, bd)) {
-        hasGlass_ = false;
-        avg_ = dark_ ? rgb(26, 27, 31) : rgb(242, 243, 245);
-        glass_.fillRect(0, 0, w_, h_, avg_);
-        return;
-    }
-    hasGlass_ = true;
-    glass_.buildCard(bd, dark_, r, 22, dark_ ? 58 : 46);
+    const int r = px(kRadius);
+
+    // ★ 与标签面板 / 岛台 / 设置窗统一：**纯色雾 + 玻璃边**（buildFlatPanel）。
+    //
+    //   不再抓屏、不再 buildCard —— 那是早期"抓屏做玻璃"的遗留管线：
+    //   它要求先把窗口藏起来（rebuildGlassOffscreen 里挪到 -20000 再挪回来），
+    //   一进一出就是用户看到的闪烁，而且窗口一变尺寸就得重抓。
+    glass_.buildFlatPanel(cfg_ ? cfg_->panelOpacity : 90, r, dark_);
     avg_ = glass_.average();
-    glass_.addBorder(r, dark_);
-    glass_.cutRoundCorners(r);
+    hasGlass_ = true;
 }
 
 void SearchWindow::rebuildGlassOffscreen() {
-    if (!hasGlass_ || !hwnd_) return;
-    SetWindowPos(hwnd_, nullptr, -20000, -20000, w_, h_,
-                 SWP_NOREDRAW | SWP_NOACTIVATE | SWP_NOZORDER);
-    Sleep(16);
+    if (!hwnd_) return;
+    // ★ 不再"挪到 -20000 再挪回来"：现在不抓屏了，重烘焙只跟尺寸/主题有关，
+    //   没有"把自己拍进去"的问题，也就没有那一进一出的闪烁。
     buildGlass();
     redraw();
-    SetWindowPos(hwnd_, nullptr, x_, y_, w_, h_, SWP_NOACTIVATE | SWP_NOZORDER);
 }
 
 void SearchWindow::pushFrame() {
