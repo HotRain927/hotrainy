@@ -351,9 +351,13 @@ LRESULT SettingsWindow::handle(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 if (abs(nx - x_) + abs(ny - y_) > px(2)) dragged_ = true;
                 x_ = nx;
                 y_ = ny;
-                const int shd = shadowInset();
-                SetWindowPos(hwnd_, nullptr, x_ - shd, y_ - shd, 0, 0,
+                // ★ 照抄搜索框的拖动方式（它是三个面板里唯一丝滑的）：
+                //   客户区坐标交给 ULW 的 pptDst 去落位，这里只更新内容原点，
+                //   然后**每次都要重新提交一帧**（redraw -> pushFrame），
+                //   分层表面才会立刻跟着走。
+                SetWindowPos(hwnd_, nullptr, x_, y_, 0, 0,
                              SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+                redraw();
                 return 0;
             }
             const Hit* h = hitAt(mx, my);

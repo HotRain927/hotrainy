@@ -1936,10 +1936,14 @@ LRESULT IslandWindow::handle(HWND h, UINT msg, WPARAM w, LPARAM l) {
             if (top && right) return HTTOPRIGHT;
             if (top && left) return HTTOPLEFT;
 
-            // 顶部那条（搜索框上方、关闭按钮左边）当拖动柄。
-            // ⚠ 不能整个顶部都算标题区 —— 那样点搜索框会被当成拖窗口。
+            // 顶部那条（搜索框上方）当**窗口拖动柄**。
+            // ⚠ 不能整个顶部都算 —— 那样点搜索框会被当成拖窗口。
             //   只在搜索框**上面**那条窄带算。
-            if (pt.y < ct + px(6) && pt.x < crr - px(40)) return HTCAPTION;
+            //
+            // ★ 这里返回 HTCLIENT（而不是 HTCAPTION）：窗口搬运改由
+            //   WM_LBUTTONDOWN/MOUSEMOVE 里的**手写拖动**接管，
+            //   和搜索框完全同一套 —— 用户反馈系统搬运那套拖起来卡/晃。
+            if (pt.y < ct + px(6) && pt.x < crr - px(40)) return HTCLIENT;
 
             return HTCLIENT;
         }
@@ -2271,6 +2275,18 @@ layoutSearchEdit();     // 搜索框位置跟上就行
             const int mx = cp.x;
             const int my = cp.y;
 
+            // ★ 窗口拖动中（照搜索框那套）：更新内容原点 + 提交一帧让窗口跟手。
+            if (winDragging_) {
+                POINT cur = {};
+                ::GetCursorPos(&cur);
+                x_ = cur.x - winDragOffset_.x;
+                y_ = cur.y - winDragOffset_.y;
+                ::SetWindowPos(h, nullptr, x_, y_, 0, 0,
+                               SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+                redraw();
+                return 0;
+            }
+
             // ── 长按拖动 ──
             //
             // 按住不放超过 kDragHoldMs 就进入拖动状态。
@@ -2327,6 +2343,17 @@ layoutSearchEdit();     // 搜索框位置跟上就行
             const POINT cp = contentPt(h, l);
             const int mx = cp.x;
             const int my = cp.y;
+
+            // ★ 顶部窄带 -> 窗口拖动（照搜索框那套）。判定范围与原 HTCAPTION 一致。
+            if (my < px(6) && mx < w_ - px(40)) {
+                POINT cur = {};
+                ::GetCursorPos(&cur);
+                winDragging_ = true;
+                winDragOffset_.x = cur.x - x_;
+                winDragOffset_.y = cur.y - y_;
+                ::SetCapture(h);
+                return 0;
+            }
 
             // （原来这里处理 × 关闭按钮的点击 —— 已删除）
 
@@ -2417,6 +2444,14 @@ layoutSearchEdit();     // 搜索框位置跟上就行
             const POINT cp = contentPt(h, l);
             const int mx = cp.x;
             const int my = cp.y;
+            // ★ 窗口拖动收尾（优先于格子逻辑）
+            if (winDragging_) {
+                winDragging_ = false;
+                if (::GetCapture() == h) ::ReleaseCapture();
+                if (cfg_) { cfg_->islandX = x_; cfg_->islandY = y_; }
+                if (onConfigDirty) onConfigDirty();
+                return 0;
+            }
             if (::GetCapture() == h) ::ReleaseCapture();
             ::KillTimer(h, kDragTimerId);       // 不再需要长按检测
             ::KillTimer(h, kDragAnimTimerId);   // 让位动画也停

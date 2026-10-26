@@ -211,6 +211,9 @@ private:
     // 对照标签面板的 HoverPanel::fgHwnd_。
     HWND fgHwnd_ = nullptr;
     bool dragLive_ = false;      // 拖动/缩放中（此时开着实时的背景重抓）
+    // ★ 窗口拖动（照搜索框那套手写拖动，不再用系统的 HTCAPTION 搬运）
+    bool winDragging_ = false;
+    POINT winDragOffset_ = {0, 0};
 
     bool visible_ = false;
     bool dark_ = true;
