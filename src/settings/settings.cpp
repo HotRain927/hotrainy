@@ -1142,12 +1142,6 @@ bool SettingsWindow::getBool(const std::string& key) const {
     if (key == "audio_bar") return cfg_->audioBar;
     if (key == "audio_bar_w") return cfg_->audioBarW;
     if (key == "audio_bar_h") return cfg_->audioBarH;
-    if (key == "audio_tone") {
-        return cfg_->audioTone == "black"  ? 0
-             : cfg_->audioTone == "white"  ? 1
-             : cfg_->audioTone == "blue"   ? 2
-             : cfg_->audioTone == "red"    ? 3 : 4;
-    }
     if (key == "search_enabled") return cfg_->searchEnabled;
     if (key == "search_follow_explorer") return cfg_->searchFollow;
     if (key == "search_dialog_auto") return cfg_->searchDialogAuto;
@@ -1192,10 +1186,6 @@ void SettingsWindow::setBool(const std::string& key, bool v) {
     else if (key == "audio_bar") cfg_->audioBar = v;
     else if (key == "audio_bar_w") cfg_->audioBarW = v;
     else if (key == "audio_bar_h") cfg_->audioBarH = v;
-    else if (key == "audio_tone") {
-        cfg_->audioTone = (v == 0) ? "black" : (v == 1) ? "white"
-                        : (v == 2) ? "blue"  : (v == 3) ? "red" : "yellow";
-    }
     else if (key == "search_enabled") cfg_->searchEnabled = v;
     else if (key == "search_follow_explorer") cfg_->searchFollow = v;
     else if (key == "search_dialog_auto") cfg_->searchDialogAuto = v;
@@ -1234,9 +1224,12 @@ void SettingsWindow::setInt(const std::string& key, int v) {
         saveConfig(*cfg_);
     }
     else if (key == "audio_tone") {
-        // 色调只影响绘制，不改几何 —— 直接重画一次即可
+        // ★ 这里才是 setInt 的路径，赋值必须在这儿（上次误插进了 setBool，
+        //   导致点哪个色调都不会改变 cfg_->audioTone，日志永远打印 black）。
+        cfg_->audioTone = (v == 0) ? "black" : (v == 1) ? "white"
+                        : (v == 2) ? "blue"  : (v == 3) ? "red" : "yellow";
         logf("settings: 音频条色调 = %s", cfg_->audioTone.c_str());
-        saveConfig(*cfg_);
+        saveConfig(*cfg_);   // 立即存盘，重启后保持
     }
     // 叠加 alpha 反而会让图标变糊（实测锐度 7.46 → 3.60）。
     notify(key);
