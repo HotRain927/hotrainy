@@ -112,16 +112,22 @@ void captureLoop() {
         //   明显且缓慢流动；两端略收，更像声波包络；整体乘真实总峰值，于是
         //   有声音才起伏、静音时收成一根细线。
         const double nowS = (double)::GetTickCount64() / 1000.0;
+        const double kPi = 3.14159265358979;
         float levels[kBarCount];
         for (int i = 0; i < kBarCount; ++i) {
             const double u = (double)i / (double)(kBarCount - 1);
-            double f = 0.55
-                     + 0.30 * std::sin(u * 6.0 - nowS * 1.1)
-                     + 0.18 * std::sin(u * 13.0 + nowS * 0.7 + 1.3)
-                     + 0.10 * std::sin(u * 27.0 - nowS * 1.9 + 2.6);
-            f *= 0.55 + 0.45 * std::sin(3.14159265358979 * u);
+            // ★ 沿线起伏：四组行波叠加（频率依次升高）—— 沿 x 出 3~5 个明显
+            //   的峰谷，而且整体缓慢流动。这里**不再**乘拱形，否则拱会盖掉起伏。
+            double f = 0.50
+                     + 0.30 * std::sin(u * 9.0 - nowS * 1.10)
+                     + 0.22 * std::sin(u * 17.0 + nowS * 0.75 + 1.3)
+                     + 0.14 * std::sin(u * 33.0 - nowS * 1.90 + 2.6)
+                     + 0.08 * std::sin(u * 61.0 + nowS * 2.70 + 0.7);
             f = std::max(0.0, std::min(1.0, f));
-            levels[i] = (float)std::min(1.0, (double)peak * (0.5 + 0.7 * f));
+            // ★ 中轴最高：温和圆顶，只决定整体趋势（两端约 0.45，中间 1.0，
+            //   比之前的 sin^2 拱平缓得多，起伏能透出来）。
+            const double dome = 0.45 + 0.55 * std::sin(kPi * u);
+            levels[i] = (float)std::min(1.0, (double)peak * dome * (0.55 + 0.85 * f));
         }
 
         {
@@ -224,8 +230,10 @@ void drawFrame() {
                                 (-p0 + p2) * fr +
                                 (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * fr * fr +
                                 (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * fr * fr * fr);
-        const double taper = std::sin(3.14159265358979 * u);
-        return std::max(0.0, v) * taper * taper;      // 两端收成细线
+        // ★ 只把最两端收成细线：原来是 sin^2（等于又叠了一层拱，把沿线起伏
+        //   一起压平了），改成 sqrt(sin) —— 中间绝大部分宽度不被压。
+        const double taper = std::sqrt(std::max(0.0, std::sin(3.14159265358979 * u)));
+        return std::max(0.0, v) * taper;
     };
 
     if (!silent) {
