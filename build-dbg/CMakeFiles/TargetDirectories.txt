@@ -1,0 +1,9 @@
+C:/hot_rain/cpp/hotrainy/build-dbg/CMakeFiles/GlassBoot.dir
+C:/hot_rain/cpp/hotrainy/build-dbg/CMakeFiles/GlassTAP.dir
+C:/hot_rain/cpp/hotrainy/build-dbg/CMakeFiles/hotrainy.dir
+C:/hot_rain/cpp/hotrainy/build-dbg/CMakeFiles/edit_cache.dir
+C:/hot_rain/cpp/hotrainy/build-dbg/CMakeFiles/rebuild_cache.dir
+C:/hot_rain/cpp/hotrainy/build-dbg/tests/CMakeFiles/hr_test_hotkey.dir
+C:/hot_rain/cpp/hotrainy/build-dbg/tests/CMakeFiles/hr_test_pinyin.dir
+C:/hot_rain/cpp/hotrainy/build-dbg/tests/CMakeFiles/edit_cache.dir
+C:/hot_rain/cpp/hotrainy/build-dbg/tests/CMakeFiles/rebuild_cache.dir

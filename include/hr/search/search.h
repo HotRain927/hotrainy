@@ -80,6 +80,7 @@ private:
     LRESULT handle(HWND, UINT, WPARAM, LPARAM);
 
     void layoutEntry();
+    int shadowInset() const;     // 外阴影留白（窗口比内容大一圈）
     void buildGlass();
     void rebuildGlassOffscreen();
     void redraw();
@@ -128,8 +129,10 @@ private:
     HBRUSH editBrush_ = nullptr;
     Config* cfg_ = nullptr;
 
-    Surface glass_;
-    Surface frame_;
+    Surface glass_;      // 内容大小：雾化底
+    Surface frame_;      // 内容大小：本帧
+    Surface shadow_;     // 画布大小：只含外圈影子
+    Surface outer_;      // 画布大小：shadow_ + frame_ → 提交给窗口
     uint32_t avg_ = 0xFF1A1B1F;
     bool dark_ = true;
     bool hasGlass_ = false;

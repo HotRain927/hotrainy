@@ -858,7 +858,9 @@ bool SearchWindow::create(HINSTANCE hInst, Config* cfg, bool dark) {
     // 输入框必须是「独立弹窗」而不是 WS_CHILD：
     // 主窗用 UpdateLayeredWindow 上屏，而这种窗口不会渲染子控件（文字整块消失，
     // 但键盘照样能输入，特别容易看漏）。做成 owner 为主窗的 popup 就正常了。
-    edit_ = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST, L"EDIT", L"",
+    // ★ 要 WS_EX_LAYERED：配合 WM_CTLCOLOREDIT 里的颜色键把输入框底色键成透明
+    //   （EDIT 不支持逐像素透明，和岛台搜索框同一个做法）。
+    edit_ = CreateWindowExW(WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TOPMOST, L"EDIT", L"",
                             WS_POPUP | ES_AUTOHSCROLL | ES_LEFT, 0, 0, 10, 10, hwnd_, nullptr,
                             hInst, nullptr);
     if (edit_) {
@@ -950,6 +952,27 @@ bool SearchWindow::targetBounds(RECT& out, HWND& hwnd, bool& isDialog) const {
     return false;
 }
 
+// 客户区坐标 → 内容坐标。
+//
+// ★ 和"窗口向外让出外阴影留白"是**配套**的：窗口比内容大了一圈，
+//   客户区坐标就比内容坐标多出那一圈 —— 不换算的话所有悬停/点击
+//   （结果行、滚动条、关闭按钮、右下角缩放）都会整体偏掉。
+//   对照 IslandWindow::contentPt()，它踩过同样的坑。
+static POINT searchContentPt(HWND h, LPARAM l) {
+    POINT p = {GET_X_LPARAM(l), GET_Y_LPARAM(l)};
+    RECT wr{}, cr{};
+    if (::GetWindowRect(h, &wr) && ::GetClientRect(h, &cr)) {
+        POINT c0 = {0, 0};
+        ::ClientToScreen(h, &c0);
+        p.x += (c0.x - wr.left);
+        p.y += (c0.y - wr.top);
+    }
+    // ⚠ 这里必须与 SearchWindow::shadowInset() 保持一致
+    p.x -= px(14);
+    p.y -= px(14);
+    return p;
+}
+
 void SearchWindow::place(bool autoOnly) {
     RECT work = {};
     SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0);
@@ -1002,6 +1025,10 @@ void SearchWindow::refreshAppearance() {
     if (visible_) redraw();
 }
 
+int SearchWindow::shadowInset() const {
+    return px(14);
+}
+
 void SearchWindow::buildGlass() {
     glass_.create(w_, h_);
     const int r = px(kRadius);
@@ -1011,9 +1038,24 @@ void SearchWindow::buildGlass() {
     //   不再抓屏、不再 buildCard —— 那是早期"抓屏做玻璃"的遗留管线：
     //   它要求先把窗口藏起来（rebuildGlassOffscreen 里挪到 -20000 再挪回来），
     //   一进一出就是用户看到的闪烁，而且窗口一变尺寸就得重抓。
-    glass_.buildFlatPanel(cfg_ ? cfg_->panelOpacity : 90, r, dark_);
+    // 与岛台 rebuildBase() 完全一致：兜底 0 = 纯透明（边框始终保留）
+    const int op = cfg_ ? cfg_->panelOpacity : 0;
+    glass_.buildFlatPanel(op, r, dark_);
+    // ★ 这一步是"边框/雾化看起来和岛台一样"的关键：岛台有 cutRoundCorners，
+    //   搜索窗原来漏了 —— 四角的雾和边框因此对不上。
+    glass_.cutRoundCorners(r);
     avg_ = glass_.average();
     hasGlass_ = true;
+
+    // 外阴影只跟尺寸/深浅有关，跟透明度无关 ——
+    // 拖透明度滑块时不要重算它（那是一整张逐像素距离场，白算会让拖动发涩）。
+    const int s = shadowInset();
+    if (shadow_.width() != w_ + s * 2 || shadow_.height() != h_ + s * 2) {
+        shadow_.create(w_ + s * 2, h_ + s * 2);
+        shadow_.clear();
+        RECT content = {s, s, s + w_, s + h_};
+        shadow_.applyOuterShadow(content, r, dark_, px(2));
+    }
 }
 
 void SearchWindow::rebuildGlassOffscreen() {
@@ -1027,12 +1069,25 @@ void SearchWindow::rebuildGlassOffscreen() {
 void SearchWindow::pushFrame() {
     HDC screen = GetDC(nullptr);
     if (!screen) return;
-    HBITMAP bmp = frame_.createPremultipliedBitmap(screen);
+
+    // ★ 抬命中地板：分层窗口的命中测试**只看 alpha**，雾/边框之外的地方 alpha 很低，
+    //   不抬的话窗口边缘点不到（和设置窗、岛台同一个理由）。
+    RECT contentRc = {0, 0, w_, h_};
+    frame_.ensureHitTestableArea(contentRc, px(kRadius),
+                                 hitTestAlphaFor(cfg_ ? cfg_->panelOpacity : 100));
+
+    // ★ 内容 + 外阴影合成到"带留白"的画布再整幅提交；
+    //   落点向左上各让出留白（dst = 内容位置 - 留白），内容坐标一像素不动。
+    const int s = shadowInset();
+    outer_ = shadow_;
+    outer_.blendOver(frame_, s, s);
+
+    HBITMAP bmp = outer_.createPremultipliedBitmap(screen);
     if (bmp) {
         HDC mem = CreateCompatibleDC(screen);
         HGDIOBJ old = SelectObject(mem, bmp);
-        POINT dst = {x_, y_};
-        SIZE sz = {w_, h_};
+        POINT dst = {x_ - s, y_ - s};
+        SIZE sz = {outer_.width(), outer_.height()};
         POINT src = {0, 0};
         BLENDFUNCTION bf = {AC_SRC_OVER, 0, 255, AC_SRC_ALPHA};
         UpdateLayeredWindow(hwnd_, screen, &dst, &sz, mem, &src, 0, &bf, ULW_ALPHA);
@@ -1083,9 +1138,6 @@ void SearchWindow::drawHeader() {
 
     uint32_t hair = (blendColor(avg_, dark_ ? 0xFFFFFFFFu : 0xFF000000u, dark_ ? 0.16 : 0.12)) |
                     0xFF000000u;
-    uint32_t pill = (blendColor(avg_, dark_ ? 0xFFFFFFFFu : 0xFF000000u, dark_ ? 0.10 : 0.05)) |
-                    0xFF000000u;
-
     // 放大镜：圆圈 + 手柄（也是拖动手柄）
     int cx = px(26), cy = px(24), r = px(7);
     bool dragHot = (GetAsyncKeyState(VK_LBUTTON) == 0);
@@ -1097,8 +1149,9 @@ void SearchWindow::drawHeader() {
     frame_.drawLine(cx + (int)(r * 0.7), cy + (int)(r * 0.7), cx + (int)(r * 1.9),
                     cy + (int)(r * 1.9), col, (float)std::max(1, px(1.6)));
 
-    // 输入区凹槽
-    frame_.fillRoundRect(px(44), px(9), w_ - px(12) - px(44), px(39) - px(9), px(9), pill);
+    // 输入区：与岛台的搜索框**完全一致** —— 不铺底，只描一圈"玻璃边"。
+    //   （原来这里铺了一块不透明实色胶囊，看着就是一块平的方框。）
+    frame_.strokeGlassEdge(px(44), px(9), w_ - px(12) - px(44), px(39) - px(9), px(9), dark_);
 
     frame_.fillRect(px(12), px(48), w_ - px(24), 1, hair);
 }
@@ -1460,11 +1513,14 @@ void SearchWindow::show(bool activate) {
     }
 
     place(!activate);
-    SetWindowPos(hwnd_, HWND_TOPMOST, x_, y_, w_, h_, SWP_NOACTIVATE);
+    const int s = shadowInset();
+    SetWindowPos(hwnd_, HWND_TOPMOST, x_ - s, y_ - s, w_ + s * 2, h_ + s * 2,
+                 SWP_NOACTIVATE);
     buildGlass();
     redraw();
     ShowWindow(hwnd_, SW_SHOW);
-    SetWindowPos(hwnd_, HWND_TOPMOST, x_, y_, w_, h_, SWP_NOACTIVATE);
+    SetWindowPos(hwnd_, HWND_TOPMOST, x_ - s, y_ - s, w_ + s * 2, h_ + s * 2,
+                 SWP_NOACTIVATE);
     layoutEntry();
     if (activate) {
         // 后台进程直接 SetForegroundWindow 会被系统拒绝（前台锁定），
@@ -1553,7 +1609,9 @@ void SearchWindow::followTarget() {
         y_ = work.top + ny;
         w_ = nw;
         h_ = nh;
-        SetWindowPos(hwnd_, nullptr, x_, y_, w_, h_, SWP_NOZORDER | SWP_NOACTIVATE);
+        const int s = shadowInset();
+        SetWindowPos(hwnd_, nullptr, x_ - s, y_ - s, w_ + s * 2, h_ + s * 2,
+                     SWP_NOZORDER | SWP_NOACTIVATE);
         layoutEntry();
         redraw();
         rebuildGlassOffscreen();
@@ -1655,6 +1713,12 @@ LRESULT SearchWindow::handle(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             SetBkColor(dc, RGB(rOf(pill), gOf(pill), bOf(pill)));
             if (!editBrush_)
                 editBrush_ = CreateSolidBrush(RGB(rOf(pill), gOf(pill), bOf(pill)));
+            // ★ 与岛台搜索框同一招：EDIT 不支持逐像素透明，但我们可以**让它刷什么
+            //   颜色、就把那个颜色键成透明** —— 键色与它刷的底色是同一个颜色，
+            //   于是整块填充 100% 透明，只剩文字浮在凹槽那一圈玻璃边上。
+            //   每次 CTLCOLOR 都同步一次键色，壁纸/主题变了也不会留旧色边。
+            ::SetLayeredWindowAttributes(edit_, RGB(rOf(pill), gOf(pill), bOf(pill)), 0,
+                                         LWA_COLORKEY);
             return (LRESULT)editBrush_;
         }
 
@@ -1694,7 +1758,8 @@ LRESULT SearchWindow::handle(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
 
         case WM_MOUSEMOVE: {
-            int mx = GET_X_LPARAM(lp), my = GET_Y_LPARAM(lp);
+            const POINT cp = searchContentPt(hwnd, lp);
+                int mx = cp.x, my = cp.y;
             if (resizing_) {
                 POINT cur = {};
                 GetCursorPos(&cur);
@@ -1728,7 +1793,11 @@ LRESULT SearchWindow::handle(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 y_ = ny;
                 w_ = nw;
                 h_ = nh;
-                SetWindowPos(hwnd, nullptr, x_, y_, w_, h_, SWP_NOZORDER | SWP_NOACTIVATE);
+                {
+                    const int s = shadowInset();
+                    SetWindowPos(hwnd, nullptr, x_ - s, y_ - s, w_ + s * 2, h_ + s * 2,
+                                 SWP_NOZORDER | SWP_NOACTIVATE);
+                }
                 layoutEntry();
                 redraw();
                 return 0;
@@ -1744,8 +1813,11 @@ LRESULT SearchWindow::handle(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 x_ = nx;
                 y_ = ny;
                 solidOnly_ = true;
-                SetWindowPos(hwnd, nullptr, x_, y_, 0, 0,
-                             SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+                {
+                    const int s = shadowInset();
+                    SetWindowPos(hwnd, nullptr, x_ - s, y_ - s, 0, 0,
+                                 SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+                }
                 layoutEntry();
                 redraw();
                 return 0;
@@ -1758,12 +1830,9 @@ LRESULT SearchWindow::handle(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             }
             const wchar_t* z = zoneAt(mx, my);
             if (z) {
-                const wchar_t* cur = L"arrow";
-                if (wcscmp(z, L"nw") == 0 || wcscmp(z, L"se") == 0) cur = IDC_SIZENWSE;
-                else if (wcscmp(z, L"ne") == 0 || wcscmp(z, L"sw") == 0) cur = IDC_SIZENESW;
-                else if (wcscmp(z, L"w") == 0 || wcscmp(z, L"e") == 0) cur = IDC_SIZEWE;
-                else if (wcscmp(z, L"n") == 0 || wcscmp(z, L"s") == 0) cur = IDC_SIZENS;
-                SetCursor(LoadCursorW(nullptr, cur));
+                // ★ 用户明确要求：鼠标移到面板边框上**不要变光标**，保持普通箭头，
+                //   手感与岛台一致。拖边框改大小的行为照旧，只是不换光标。
+                SetCursor(LoadCursorW(nullptr, IDC_ARROW));
                 return 0;
             }
             int idx = rowAt(my);
@@ -1776,7 +1845,8 @@ LRESULT SearchWindow::handle(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
 
         case WM_LBUTTONDOWN: {
-            int mx = GET_X_LPARAM(lp), my = GET_Y_LPARAM(lp);
+            const POINT cp = searchContentPt(hwnd, lp);
+                int mx = cp.x, my = cp.y;
             // 点窗里任何一处都确保自己是前台、输入框有焦点（对照 _on_any_click）
             HWND fg = GetForegroundWindow();
             if (fg != hwnd && fg != edit_) SetForegroundWindow(hwnd);
