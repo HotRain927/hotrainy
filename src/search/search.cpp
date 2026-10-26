@@ -847,8 +847,14 @@ bool SearchWindow::create(HINSTANCE hInst, Config* cfg, bool dark) {
     w_ = px(std::max<double>(kMinW, cfg_->searchW));
     h_ = px(std::max<double>(kMinH, cfg_->searchH));
 
+    // ⚠⚠ 必须带 WS_THICKFRAME（照抄岛台那条注释）：
+    //   这是"窗口可拖边框改大小"的标志。没有它的话，即使 WM_NCHITTEST 正确
+    //   返回了 HTBOTTOMRIGHT，系统也会直接忽略 —— 根本不进拖动循环，
+    //   WM_SIZING / WM_EXITSIZEMOVE 一个都不会来。
+    //   分层窗口（WS_EX_LAYERED + UpdateLayeredWindow）下那圈非客户区边框
+    //   不渲染，所以外观不受影响。
     hwnd_ = CreateWindowExW(WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TOPMOST, kClass, L"搜索",
-                            WS_POPUP, 0, 0, w_, h_, nullptr, nullptr, hInst, this);
+                            WS_POPUP | WS_THICKFRAME, 0, 0, w_, h_, nullptr, nullptr, hInst, this);
     if (!hwnd_) {
         logf("search: 创建窗口失败 %lu", (unsigned long)GetLastError());
         return false;
@@ -1304,13 +1310,12 @@ void SearchWindow::drawFooter() {
 void SearchWindow::redraw() {
     if (!hwnd_) return;
     if (frame_.width() != w_ || frame_.height() != h_) frame_.create(w_, h_);
-    if (!solidOnly_ && glass_.width() == w_ && glass_.height() == h_) {
-        frame_ = glass_;
-    } else {
-        // 拖动/缩放中或玻璃底尺寸还没更新：先铺实色，松手后再重建
-        frame_.fillRect(0, 0, w_, h_, avg_ | 0xFF000000u);
-        frame_.cutRoundCorners(px(kRadius));
-    }
+    // ★ 不再有"拖动/缩放中先铺一块实色"的兜底 —— 那是抓屏玻璃时代的产物
+    //   （当年抓的底图在新尺寸下是旧的，只能铺色顶着）。现在底是**雾**，
+    //   重画一遍很便宜，所以尺寸一变就直接重建，全程保持雾化/透明，
+    //   不会再出现"缩放期间冒出底色"（用户反馈的那个现象）。
+    if (glass_.width() != w_ || glass_.height() != h_) buildGlass();
+    frame_ = glass_;
     if (editBrush_) {
         DeleteObject(editBrush_);
         editBrush_ = nullptr;
@@ -1756,6 +1761,81 @@ LRESULT SearchWindow::handle(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 return 0;
             }
             return 0;
+
+        case WM_NCHITTEST: {
+            // ★ 与岛台同一套：把边框区域交还给**系统自己的缩放循环**。
+            //   lParam 是**屏幕坐标**，先转客户区、再减掉外阴影留白得到内容坐标，
+            //   然后复用 zoneAt() 判区域。
+            POINT p = {GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
+            ::ScreenToClient(hwnd, &p);
+            const int s = shadowInset();
+            const wchar_t* z = zoneAt(p.x - s, p.y - s);
+            if (!z) return HTCLIENT;
+            if (wcscmp(z, L"nw") == 0) return HTTOPLEFT;
+            if (wcscmp(z, L"ne") == 0) return HTTOPRIGHT;
+            if (wcscmp(z, L"sw") == 0) return HTBOTTOMLEFT;
+            if (wcscmp(z, L"se") == 0) return HTBOTTOMRIGHT;
+            if (wcscmp(z, L"n") == 0) return HTTOP;
+            if (wcscmp(z, L"s") == 0) return HTBOTTOM;
+            if (wcscmp(z, L"w") == 0) return HTLEFT;
+            if (wcscmp(z, L"e") == 0) return HTRIGHT;
+            return HTCLIENT;
+        }
+
+        case WM_SETCURSOR: {
+            // ★ 用户明确要求：鼠标移到面板边框上**不要变光标**（保持普通箭头）。
+            //   带 WS_THICKFRAME 后系统会在边框上换成缩放光标，这里拦掉；
+            //   输入框那种靠子窗口自己设的 I 形光标不受影响。
+            const UINT hit = LOWORD(lp);
+            if (hit == HTLEFT || hit == HTRIGHT || hit == HTTOP || hit == HTBOTTOM ||
+                hit == HTTOPLEFT || hit == HTTOPRIGHT || hit == HTBOTTOMLEFT ||
+                hit == HTBOTTOMRIGHT) {
+                ::SetCursor(::LoadCursorW(nullptr, IDC_ARROW));
+                return TRUE;
+            }
+            break;
+        }
+
+        case WM_ENTERSIZEMOVE:
+            // 系统缩放循环开始：这期间不要因为"失焦"把面板收起来
+            resizing_ = true;
+            return 0;
+
+        case WM_EXITSIZEMOVE:
+            resizing_ = false;
+            {
+                const int s = shadowInset();
+                RECT wr{};
+                if (::GetWindowRect(hwnd, &wr)) {
+                    w_ = std::max(px(kMinW), (int)(wr.right - wr.left) - s * 2);
+                    h_ = std::max(px(kMinH), (int)(wr.bottom - wr.top) - s * 2);
+                }
+                buildGlass();
+                layoutEntry();
+                redraw();
+            }
+            return 0;
+
+        case WM_SIZE: {
+            if (wp == SIZE_MINIMIZED) break;
+            // ★ 内容尺寸 = 客户区 - 四周留白（窗口矩形由提交时的 dst/size 决定）。
+            //   缩放过程中每帧都要跟着更新并重画雾化底，否则下一帧提交还是旧尺寸，
+            //   窗口会被"弹回去"。
+            const int s = shadowInset();
+            RECT cr{};
+            if (::GetClientRect(hwnd, &cr)) {
+                int nw = std::max(px(kMinW), (int)(cr.right - cr.left) - s * 2);
+                int nh = std::max(px(kMinH), (int)(cr.bottom - cr.top) - s * 2);
+                if (nw != w_ || nh != h_) {
+                    w_ = nw;
+                    h_ = nh;
+                    buildGlass();
+                    layoutEntry();
+                    redraw();
+                }
+            }
+            return 0;
+        }
 
         case WM_MOUSEMOVE: {
             const POINT cp = searchContentPt(hwnd, lp);
