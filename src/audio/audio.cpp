@@ -433,14 +433,20 @@ static void applyAudioGeometryNow() {
     if (barW > sw) barW = sw;
     // ★ 默认位置：靠屏幕下方（留 1/12 屏高的边距）。原来是在垂直方向居中。
     int barY = (g_posY >= 0) ? g_posY : (sh - barH) - sh / 12;   // remembered position
-    if (barY < 0) barY = 0;
-    if (barY + barH > sh) barY = std::max(0, sh - barH);   // 整窗留在屏幕上
+    // ★ 记住的位置**照原样恢复**（用户反馈："重启之后不在上次的位置"）。
+    //   原来是"整窗夹回屏幕内"：例如 Y=874 + 高 842 > 1600 就被夹成 758，
+    //   于是每次重开都往上跳一截。现在只保证"至少 60px 露在屏幕里"
+    //   （免得拖到完全看不见、再也抓不回来），其余完全尊重用户放的位置。
+    const int kKeepVisible = 60;
+    if (barY > sh - kKeepVisible) barY = sh - kKeepVisible;
+    if (barY < -barH + kKeepVisible) barY = -barH + kKeepVisible;
     // ★ 横向位置也要恢复（用户："重启之后不在上次的位置"）。
     //   原来这里把 X 写死成 0，所以每次都跳到屏幕最左边 ——
     //   配置里的 audioBarX 被完全忽略（拖动时明明存下来了）。
     int barX = (g_posX >= 0) ? g_posX : (sw - barW) / 2;   // 没记录过就水平居中
-    if (barX < 0) barX = 0;
-    if (barX + barW > sw) barX = std::max(0, sw - barW);   // 整窗留在屏幕上
+    // 同样只保证至少 60px 露在屏幕内，尊重用户摆放（见上面 barY 的说明）
+    if (barX > sw - kKeepVisible) barX = sw - kKeepVisible;
+    if (barX < -barW + kKeepVisible) barX = -barW + kKeepVisible;
     g_w = barW;
     g_h = barH;
     ::SetWindowPos(g_hwnd, nullptr, barX, barY, barW, barH,
@@ -488,14 +494,20 @@ void startAudioBar() {
     // 位置：按用户选的 A——改尺寸/切方向时**位置不动**（左边贴边、纵向居中）
     // ★ 默认位置：靠屏幕下方（留 1/12 屏高的边距）。原来是在垂直方向居中。
     int barY = (g_posY >= 0) ? g_posY : (sh - barH) - sh / 12;   // remembered position
-    if (barY < 0) barY = 0;
-    if (barY + barH > sh) barY = std::max(0, sh - barH);   // 整窗留在屏幕上
+    // ★ 记住的位置**照原样恢复**（用户反馈："重启之后不在上次的位置"）。
+    //   原来是"整窗夹回屏幕内"：例如 Y=874 + 高 842 > 1600 就被夹成 758，
+    //   于是每次重开都往上跳一截。现在只保证"至少 60px 露在屏幕里"
+    //   （免得拖到完全看不见、再也抓不回来），其余完全尊重用户放的位置。
+    const int kKeepVisible = 60;
+    if (barY > sh - kKeepVisible) barY = sh - kKeepVisible;
+    if (barY < -barH + kKeepVisible) barY = -barH + kKeepVisible;
     // ★ 横向位置也要恢复（用户："重启之后不在上次的位置"）。
     //   原来这里把 X 写死成 0，所以每次都跳到屏幕最左边 ——
     //   配置里的 audioBarX 被完全忽略（拖动时明明存下来了）。
     int barX = (g_posX >= 0) ? g_posX : (sw - barW) / 2;   // 没记录过就水平居中
-    if (barX < 0) barX = 0;
-    if (barX + barW > sw) barX = std::max(0, sw - barW);   // 整窗留在屏幕上
+    // 同样只保证至少 60px 露在屏幕内，尊重用户摆放（见上面 barY 的说明）
+    if (barX > sw - kKeepVisible) barX = sw - kKeepVisible;
+    if (barX < -barW + kKeepVisible) barX = -barW + kKeepVisible;
     g_w = barW;
     g_h = barH;
 
