@@ -2293,7 +2293,11 @@ layoutSearchEdit();     // 搜索框位置跟上就行
                 ::GetCursorPos(&cur);
                 x_ = cur.x - winDragOffset_.x;
                 y_ = cur.y - winDragOffset_.y;
-                ::SetWindowPos(h, nullptr, x_, y_, 0, 0,
+                // ⚠ 落点必须与 pushFrame() 里 ULW 的 dst 一致（都用 x_-留白）：
+                //   写成内容坐标 x_ 的话，一帧内窗口先被摆到偏 21px 的位置、
+                //   再被 ULW 拉回来 —— 设置窗当初的频闪就是这个，岛台同样。
+                const int shd = shadowInset();
+                ::SetWindowPos(h, nullptr, x_ - shd, y_ - shd, 0, 0,
                                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
                 pushFrame();   // 纯移动：只提交，不重画（见 pushFrame 说明）
                 return 0;
