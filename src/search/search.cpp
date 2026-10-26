@@ -1790,8 +1790,23 @@ LRESULT SearchWindow::handle(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             //   ⚠ 不要再加非客户区边框：UpdateLayeredWindow 的位图贴在窗口左上角，
             //     不是客户区（实测 WS_THICKFRAME 的边框是 10px，多减会让判定再偏 10px）。
             const int s = shadowInset();
-            const wchar_t* z = zoneAt(p.x - (wr.left + s), p.y - (wr.top + s));
-            if (!z) return HTCLIENT;
+            // ★ 只依赖**窗口矩形**（物理事实），不碰 w_/h_（内部记账）——
+            //   岛台就是这么做的。原因很实际：下侧/右侧的判定要用内容的
+            //   下/右边界，一旦 w_/h_ 比真实内容小一点（客户区 vs 窗口、
+            //   隐藏时的残留……），下侧/右侧算出来的坐标就越界被丢弃。
+            //   实测正是"上面两个角好、下面两个角完全没反应"。
+            const int cl = wr.left + s, ct = wr.top + s;   // 内容四角
+            const int crr = wr.right - s, cbb = wr.bottom - s;
+            const int corner = px(24);                     // 角：36 物理像素
+            const bool cL = p.x < cl + corner;
+            const bool cR = p.x >= crr - corner;
+            const bool cT = p.y < ct + corner;
+            const bool cB = p.y >= cbb - corner;
+            if (cB && cR) return HTBOTTOMRIGHT;
+            if (cB && cL) return HTBOTTOMLEFT;
+            if (cT && cR) return HTTOPRIGHT;
+            if (cT && cL) return HTTOPLEFT;
+            return HTCLIENT;
             // ★ 照岛台：**只留四个角**当缩放柄，四条边不进缩放。
             //
             //   岛台源码里就写着用户当初的原话 ——
@@ -1801,11 +1816,7 @@ LRESULT SearchWindow::handle(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             //   我上一版给边也返回了 HT 码，结果手落点稍偏就命中一条边：
             //   "有的角只能左右、有的角只能上下、有的角干脆没反应"。
             //   现在拖任意一个角 = 系统按 HT*CORNER 同时改宽改高。
-            if (wcscmp(z, L"se") == 0) return HTBOTTOMRIGHT;
-            if (wcscmp(z, L"sw") == 0) return HTBOTTOMLEFT;
-            if (wcscmp(z, L"ne") == 0) return HTTOPRIGHT;
-            if (wcscmp(z, L"nw") == 0) return HTTOPLEFT;
-            return HTCLIENT;
+
         }
 
         case WM_SETCURSOR: {
@@ -1860,14 +1871,27 @@ LRESULT SearchWindow::handle(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             auto wpos = reinterpret_cast<WINDOWPOS*>(lp);
             if (wpos) {
                 const int s = shadowInset();
+                // ⚠ 尺寸必须用 **GetWindowRect（窗口矩形）**，不能用 wpos->cx：
+                //   带 WS_THICKFRAME 时 wpos->cx 是**客户区**尺寸，比窗口小
+                //   2×边框（实测 10px×2 = 20px），而 UpdateLayeredWindow 的位图
+                //   是按**窗口**尺寸贴的（psize = 内容 + 2×留白）。
+                //   用客户区尺寸会让 w_/h_ 比真实内容小 20px —— 于是右侧/下侧的
+                //   判定算出来的坐标落到 w_/h_ 之外被 zoneAt 判空，
+                //   表现就是"右下角怎么拖都没反应"（实测扫描确认）。
+                RECT wr{};
                 if (!(wpos->flags & SWP_NOMOVE)) {
-                    x_ = wpos->x + s;
-                    y_ = wpos->y + s;
+                    if (::GetWindowRect(hwnd, &wr)) {
+                        x_ = wr.left + s;
+                        y_ = wr.top + s;
+                    } else {
+                        x_ = wpos->x + s;
+                        y_ = wpos->y + s;
+                    }
                 }
                 bool sizeChanged = false;
-                if (!(wpos->flags & SWP_NOSIZE) && wpos->cx > 0 && wpos->cy > 0) {
-                    const int nw = std::max(px(kMinW), wpos->cx - s * 2);
-                    const int nh = std::max(px(kMinH), wpos->cy - s * 2);
+                if (!(wpos->flags & SWP_NOSIZE) && ::GetWindowRect(hwnd, &wr)) {
+                    const int nw = std::max(px(kMinW), (int)(wr.right - wr.left) - s * 2);
+                    const int nh = std::max(px(kMinH), (int)(wr.bottom - wr.top) - s * 2);
                     if (nw != w_ || nh != h_) {
                         w_ = nw;
                         h_ = nh;
