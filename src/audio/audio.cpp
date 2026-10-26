@@ -247,7 +247,8 @@ void drawFrame() {
         //   再沿 x 加一点色相漂移 —— 色调更丰富。
         // 静音 3 条平直细线；有声 11 根（用户指定），alpha 与颜色按同一条
         // 线性梯度从内到外均匀变淡。
-        const int kStrands = silent ? 3 : 11;
+        // 静音 3 条；有声 14 根（用户指定）
+        const int kStrands = silent ? 3 : 14;
         const int kStep = 1;                    // 横向采样步长（1px -> 更顺）
         // ★ 几何还原成第一版那套细线条（用户在"变粗"之后要求改回来）；
         //   变淡方向保留"内亮外淡"，并把跨度拉大 —— 最外圈 alpha 归 0，
@@ -255,12 +256,17 @@ void drawFrame() {
         // ⚠ 宽度是**逐层**的，同一层里所有丝线宽度完全一致 ——
         //   "越向外越淡"只靠 alpha 与颜色（饱和度/亮度），**绝不靠变细**
         //   （用户明确否掉"越向外线越细"）。
+        // ★ 每根线都发柔光（用户要求）：三层叠加 ——
+        //   宽而极淡的外光晕 + 中光晕 + 细亮芯。光晕 alpha 只有 0x08/0x14，
+        //   所以线看着仍然是细的，只是周围有一圈柔光(bloom)。
+        //   宽度仍是**逐层统一**的：同一层所有丝线一样宽，变淡只靠 alpha/颜色。
         struct Pass { float w; uint32_t a0; uint32_t a1; };
-        const Pass passes[2] = {
-            {1.0f, 0x14u, 0x00u},               // 柔光：内 0x14 -> 外 0x00（极淡）
-            {0.6f, 0xF0u, 0x08u},               // 线芯：内 0xF0 -> 外 0x08
+        const Pass passes[3] = {
+            {3.2f, 0x08u, 0x00u},               // 外光晕（很淡的 bloom）
+            {1.8f, 0x14u, 0x00u},               // 中光晕
+            {0.7f, 0xF0u, 0x08u},               // 亮芯：内 0xF0 -> 外 0x08
         };
-        for (int pass = 0; pass < 2; ++pass) {
+        for (int pass = 0; pass < 3; ++pass) {
             for (int s = 0; s < kStrands; ++s) {
                 const double k = (s + 1) / (double)kStrands;   // 由内到外
                 const double ph = t * (0.7 + 0.5 * k) + s * 2.3;
