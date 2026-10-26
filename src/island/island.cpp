@@ -2299,6 +2299,11 @@ layoutSearchEdit();     // 搜索框位置跟上就行
                 const int shd = shadowInset();
                 ::SetWindowPos(h, nullptr, x_ - shd, y_ - shd, 0, 0,
                                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+                // ★ 必须重摆内嵌搜索框：它是**独立顶层窗口**（分层窗口渲染不了
+                //   子控件），不跟着父窗口走。漏掉这一句，面板在动、输入框落后
+                //   一拍 —— 就是不够丝滑/发飘。（搜索窗面板的拖动分支里
+                //   layoutEntry() 干的正是这件事。）
+                layoutSearchEdit();
                 pushFrame();   // 纯移动：只提交，不重画（见 pushFrame 说明）
                 return 0;
             }
