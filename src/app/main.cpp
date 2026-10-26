@@ -1077,7 +1077,7 @@ int main() {
     saveConfig(g_cfg);
     initAudioBar(GetModuleHandleW(nullptr));
     audioWire();    // 音频条的接线（见 src/audio/audio_wire.cpp）
-    setAudioBarGeometry(g_cfg.audioBarW, g_cfg.audioBarH, g_cfg.audioBarDir);
+    setAudioBarGeometry(g_cfg.audioBarW, g_cfg.audioBarH);
     setAudioBarPos(g_cfg.audioBarX, g_cfg.audioBarY);
 
     // ── 岛台 ──

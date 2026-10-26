@@ -20,7 +20,7 @@ namespace hr {
 void setAudioBarMovedHook(void (*cb)(int x, int y));
 // 启动时按记忆位置摆放（-1 = 用默认位置）
 void setAudioBarPos(int x, int y);
-void setAudioBarGeometry(int w, int h, const std::string& dir);
+void setAudioBarGeometry(int w, int h);   // 方向功能已删除：固定横向丝带
 
 void initAudioBar(HINSTANCE hInst);
 void startAudioBar();

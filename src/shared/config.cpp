@@ -88,8 +88,6 @@ bool loadConfig(Config& cfg, std::vector<std::string>& warnings) {
     cfg.audioBarW = clampInt(root.getNum("audioBarW", 0), 0, 10000, 0);
     cfg.audioBarH = clampInt(root.getNum("audioBarH", 0), 0, 10000, 0);
     {
-        const std::string d = root.getStr("audioBarDir", "up");
-        cfg.audioBarDir = (d == "down" || d == "left" || d == "right") ? d : "up";
     }
     cfg.audioBarX = clampInt(root.getNum("audioBarX", -1), -1, 20000, -1);
     cfg.audioBarY = clampInt(root.getNum("audioBarY", -1), -1, 20000, -1);
@@ -213,7 +211,6 @@ bool saveConfig(const Config& cfg) {
     root.setNum("shortcutFontSize", cfg.shortcutFontSize);
     root.setNum("audioBarW", cfg.audioBarW);
     root.setNum("audioBarH", cfg.audioBarH);
-    root.setStr("audioBarDir", cfg.audioBarDir);
     root.setNum("audioBarX", cfg.audioBarX);
     root.setNum("audioBarY", cfg.audioBarY);
     root.setBool("searchEnabled", cfg.searchEnabled);

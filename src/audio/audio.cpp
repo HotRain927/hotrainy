@@ -168,7 +168,6 @@ void captureLoop() {
     // 配置传进来的尺寸/方向（0 = 用原来的屏幕比例）
     static int g_cfgW = 0;
     static int g_cfgH = 0;
-    static std::string g_cfgDir = "left";
     static int g_posX = -1;
     static int g_posY = -1;
     static void (*g_onMoved)(int, int) = nullptr;
@@ -176,7 +175,7 @@ void captureLoop() {
 void drawFrame() {
     if (!g_hwnd || g_w <= 0 || g_h <= 0) return;
     if (g_frame.width() != g_w || g_frame.height() != g_h) g_frame.create(g_w, g_h);
-    g_frame.clear();  // 全透明底
+    g_frame.clear();   // 全透明底
 
     float levels[kBarCount];
     float rms;
@@ -186,75 +185,66 @@ void drawFrame() {
         rms = g_rms;
     }
 
-    const int gap = 2;
-    // ★ 方向：up/down = 柱子横向排开、长度纵向增长；left/right = 纵向排开、横向增长
-    const bool dirH = (g_cfgDir == "up" || g_cfgDir == "down");
-    const bool growBack = (g_cfgDir == "left" || g_cfgDir == "up");
-    const int stackLen = dirH ? g_w : g_h;
-    const int growLen = (dirH ? g_h : g_w) - 6;
-    float barH = (stackLen - gap * (kBarCount + 1)) / (float)kBarCount * 0.5f;
-    if (barH < 1.0f) barH = 2.0f;
-    float barStep = barH + gap;
-    float totalH = kBarCount * barStep + gap;
-    float startY = (stackLen - totalH) / 2.0f;
-    int maxBarW = growLen;
-
     if (rms < 0.02f) {
         g_silentFrames++;
     } else {
         g_silentFrames = 0;
     }
-    bool silent = g_silentFrames > 10;
+    const bool silent = g_silentFrames > 10;
 
-    for (int i = 0; i < kBarCount; ++i) {
-        float level = std::max(0.0f, std::min(1.0f, levels[i]));
+    // ★ 横向声波丝带（照用户给的视频效果重写，旧版竖条已删除）：
+    //   · 以水平中线**上下对称**
+    //   · 由很多根细的半透明丝线叠出来（重叠处自然显亮，像流动的发丝）
+    //   · 响的地方鼓、静的地方收成一根细线；两端渐尖
+    const double cy = g_h * 0.5;
+    const int margin = 6;
+    const double usable = (double)std::max(1, g_w - margin * 2);
+    const double maxAmp = std::max(2.0, g_h * 0.5 - 3.0);   // 最大半振幅
+    const double t = (double)::GetTickCount64() / 1000.0;   // 时间相位 -> 游动
 
-        if (level > g_peak[i]) {
-            g_peak[i] = level;
-            g_peakTimer[i] = 18;
-        } else if (g_peakTimer[i] > 0) {
-            g_peakTimer[i]--;
-        } else {
-            g_peak[i] = std::max(0.0f, g_peak[i] - 0.04f);
-        }
+    // 36 段电平 -> 逐像素包络（线性插值 + 两端渐尖）
+    auto envAt = [&](double u) {
+        const double f = u * (kBarCount - 1);
+        const int i0 = (int)f;
+        const int i1 = std::min(i0 + 1, kBarCount - 1);
+        const double fr = f - i0;
+        const double v = levels[i0] * (1.0 - fr) + levels[i1] * fr;
+        const double taper = std::sin(3.14159265358979 * u);
+        return v * taper * taper;      // 两端收成细线
+    };
 
-        const int off = (int)(startY + i * barStep);
-        const int th = std::max(2, (int)barH);
-
-        int barW, peakW, brightness, peakBrightness;
-        if (silent) {
-            barW = 4;
-            peakW = 4;
-            brightness = 0x1a;  // #1a1a1a
-            peakBrightness = 0x1a;
-        } else {
-            barW = std::max(2, (int)(maxBarW * level));
-            peakW = std::max(2, (int)(maxBarW * g_peak[i]));
-            brightness = (int)(40 + level * 215);
-            peakBrightness = std::min(255, brightness + 60);
-        }
-
-        uint32_t col = 0xFF000000u | ((uint32_t)brightness << 16) | ((uint32_t)brightness << 8) |
-                       (uint32_t)brightness;
-        uint32_t pcol = 0xFF000000u | ((uint32_t)peakBrightness << 16) |
-                        ((uint32_t)peakBrightness << 8) | (uint32_t)peakBrightness;
-
-        if (!dirH) {
-            const int bx = growBack ? (g_w - 2 - barW) : 2;
-            g_frame.fillRect(bx, off, barW, th, col);
-            if (peakW > barW + 1) {
-                const int px = growBack ? (g_w - 2 - peakW) : (2 + peakW - 2);
-                g_frame.fillRect(px, off, 2, th, pcol);
-            }
-        } else {
-            const int by = growBack ? (g_h - 2 - barW) : 2;
-            g_frame.fillRect(off, by, th, barW, col);
-            if (peakW > barW + 1) {
-                const int py = growBack ? (g_h - 2 - peakW) : (2 + peakW - 2);
-                g_frame.fillRect(off, py, th, 2, pcol);
+    if (!silent) {
+        const int kStrands = 14;
+        for (int s = 0; s < kStrands; ++s) {
+            const double k = (s + 1) / (double)kStrands;      // 由内到外
+            const double ph = t * (0.6 + 0.35 * k) + s * 1.7; // 每根自己的相位
+            const uint32_t alpha = (uint32_t)(34 + 62 * k);
+            const uint32_t col = (alpha << 24) | 0x6E8CFFu;   // 蓝紫
+            int px = 0, pyT = 0, pyB = 0;
+            for (int x = 0; x <= (int)usable; ++x) {
+                const double u = x / usable;
+                const double a = maxAmp * envAt(u);
+                // 丝线自身的起伏：两根正弦叠加，形成"发丝"的漂动
+                const double wob = std::sin(u * 9.0 + ph) * 0.26 +
+                                   std::sin(u * 23.0 + ph * 1.7) * 0.12;
+                double off = a * (k + wob * (1.0 - k) * 0.9);
+                if (off < 0.0) off = 0.0;
+                const int X = margin + x;
+                const int YT = (int)std::lround(cy - off);
+                const int YB = (int)std::lround(cy + off);
+                if (x > 0) {
+                    g_frame.drawLine(px, pyT, X, YT, col, 1.0f);
+                    g_frame.drawLine(px, pyB, X, YB, col, 1.0f);
+                }
+                px = X; pyT = YT; pyB = YB;
             }
         }
     }
+
+    // 中轴：稍亮的一条细线（静音时它就是那根"细线"）
+    g_frame.drawLine(margin, (int)cy, margin + (int)usable, (int)cy,
+                     silent ? 0x2E6E8CFFu : 0x506E8CFFu, 1.0f);
+
     HDC screen = GetDC(nullptr);
     if (!screen) return;
     HBITMAP bmp = g_frame.createPremultipliedBitmap(screen);
@@ -344,12 +334,11 @@ static void applyAudioGeometryNow() {
 void setAudioBarMovedHook(void (*cb)(int x, int y)) { g_onMoved = cb; }
 void setAudioBarPos(int x, int y) { g_posX = x; g_posY = y; }
 
-void setAudioBarGeometry(int w, int h, const std::string& dir) {
-    const bool changed = (w != g_cfgW || h != g_cfgH || dir != g_cfgDir);
+void setAudioBarGeometry(int w, int h) {
+    const bool changed = (w != g_cfgW || h != g_cfgH);
     g_cfgW = w;
     g_cfgH = h;
-    g_cfgDir = dir;
-    logf("audio: 几何设置 %dx%d dir=%s", w, h, dir.c_str());
+    logf("audio: 几何设置 %dx%d", w, h);
     if (changed && g_hwnd) applyAudioGeometryNow();
 }
 

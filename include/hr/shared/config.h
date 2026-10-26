@@ -36,7 +36,6 @@ struct Config {
     // 音频条尺寸（像素）与波动方向、拖动位置
     int audioBarW = 0;                      // 横向长度（0 = 自动：原屏幕比例）
     int audioBarH = 0;                      // 纵向长度（0 = 自动：屏高 2/3）
-    std::string audioBarDir = "up";         // up / down / left / right
     int audioBarX = -1;                     // 拖动后的位置（-1 = 默认）
     int audioBarY = -1;
     bool hoverMode = true;                  // true=悬停展开 false=点击展开

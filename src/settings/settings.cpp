@@ -1062,12 +1062,6 @@ void SettingsWindow::redraw() {
                    stepper(x, cy, cfg_->audioBarH, "audio_bar_h",
                            [this](int v) { setInt("audio_bar_h", v); }, 1, 4000, 50, false);
                });
-               y2 = row(rx, y2, L"音频条波动方向", "audio_bar_dir", [this](int x, int cy) {
-                   segmented(x, cy,
-                             {{L"向上", "up"}, {L"向下", "down"}, {L"向左", "left"}, {L"向右", "right"}},
-                             cfg_->audioBarDir, "audio_bar_dir",
-                             [this](const std::string& v) { setInt("audio_bar_dir", v == "down" ? 1 : v == "left" ? 2 : v == "right" ? 3 : 0); });
-               });
     y2 = row(rx, y2, L"开机自启动", "autostart", [this](int x, int cy) {
         toggle(x, cy, cacheAutostart_, "autostart",
                [this](bool v) { setBool("autostart", v); });
@@ -1132,11 +1126,6 @@ bool SettingsWindow::getBool(const std::string& key) const {
     if (key == "audio_bar") return cfg_->audioBar;
     if (key == "audio_bar_w") return cfg_->audioBarW;
     if (key == "audio_bar_h") return cfg_->audioBarH;
-    if (key == "audio_bar_dir") {
-        return cfg_->audioBarDir == "down"  ? 1
-             : cfg_->audioBarDir == "left"  ? 2
-             : cfg_->audioBarDir == "right" ? 3 : 0;
-    }
     if (key == "search_enabled") return cfg_->searchEnabled;
     if (key == "search_follow_explorer") return cfg_->searchFollow;
     if (key == "search_dialog_auto") return cfg_->searchDialogAuto;
@@ -1181,10 +1170,6 @@ void SettingsWindow::setBool(const std::string& key, bool v) {
     else if (key == "audio_bar") cfg_->audioBar = v;
     else if (key == "audio_bar_w") cfg_->audioBarW = v;
     else if (key == "audio_bar_h") cfg_->audioBarH = v;
-    else if (key == "audio_bar_dir") {
-        cfg_->audioBarDir = (v == 1) ? "down" : (v == 2) ? "left"
-                          : (v == 3) ? "right" : "up";
-    }
     else if (key == "search_enabled") cfg_->searchEnabled = v;
     else if (key == "search_follow_explorer") cfg_->searchFollow = v;
     else if (key == "search_dialog_auto") cfg_->searchDialogAuto = v;
@@ -1220,16 +1205,6 @@ void SettingsWindow::setInt(const std::string& key, int v) {
     else if (key == "audio_bar_h") {
         cfg_->audioBarH = std::max(1, std::min(4000, v));
         logf("settings: 音频条纵向长度 = %d", cfg_->audioBarH);
-        saveConfig(*cfg_);
-    }
-    else if (key == "audio_bar_dir") {
-        const bool oldH = (cfg_->audioBarDir == "up" || cfg_->audioBarDir == "down");
-        const std::string nd = (v == 1) ? "down" : (v == 2) ? "left" : (v == 3) ? "right" : "up";
-        const bool newH = (nd == "up" || nd == "down");
-        cfg_->audioBarDir = nd;
-        // ★ 换了轴（纵排 <-> 横排）就把宽高对调，否则又高又窄的条换成横向排开会挤成一团
-        if (oldH != newH) { const int t = cfg_->audioBarW; cfg_->audioBarW = cfg_->audioBarH; cfg_->audioBarH = t; }
-        logf("settings: 音频条方向 = %s (W=%d H=%d)", cfg_->audioBarDir.c_str(), cfg_->audioBarW, cfg_->audioBarH);
         saveConfig(*cfg_);
     }
     // 叠加 alpha 反而会让图标变糊（实测锐度 7.46 → 3.60）。
