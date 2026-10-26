@@ -491,7 +491,7 @@ void SettingsWindow::buildGlass() {
     const int s = shadowInset();
     if (shadow_.width() != winW_ + s * 2 || shadow_.height() != winH_ + s * 2) {
         shadow_.create(winW_ + s * 2, winH_ + s * 2);
-        shadow_.release();
+        shadow_.clear();
         RECT content = {s, s, s + winW_, s + winH_};
         shadow_.applyOuterShadow(content, radius, dark_, px(2));
     }
@@ -513,6 +513,33 @@ void SettingsWindow::rebuildGlassOffscreen() {
 void SettingsWindow::pushFrame() {
     HDC screen = GetDC(nullptr);
     if (!screen) return;
+
+    // ★★ 兜底（修"设置打开后整窗空白"）★★
+    //   内存优化让 close() 里 release() 了这些画布（尺寸归零）。
+    //   下面原本直接 outer_ = shadow_；shadow_ 若是 0x0，outer_ 就是 0x0，
+    //   最后 UpdateLayeredWindow 提交 0 尺寸 —— 窗口看得见、内容全空，
+    //   观感就是"设置打不开"。这里缺哪张补哪张。
+    const int s0 = shadowInset();
+    if (glass_.width() != winW_ || glass_.height() != winH_) {
+        buildGlass();                      // 同时会把 shadow_ 按尺寸重建
+    }
+    if (shadow_.width() != winW_ + s0 * 2 || shadow_.height() != winH_ + s0 * 2) {
+        buildGlass();
+    }
+    if (frame_.width() != winW_ || frame_.height() != winH_) {
+        frame_.create(winW_, winH_);
+    }
+    if (glass_.width() != winW_ || shadow_.width() != winW_ + s0 * 2 ||
+        frame_.width() != winW_) {
+        // 实在补不齐就**不要提交** —— 提交 0 尺寸会把窗口弄成空白，
+        // 保持上一帧反而更好。
+        logf("settings: pushFrame 兜底失败 glass=%dx%d shadow=%dx%d frame=%dx%d (win=%dx%d)",
+             glass_.width(), glass_.height(), shadow_.width(), shadow_.height(),
+             frame_.width(), frame_.height(), winW_, winH_);
+        ReleaseDC(nullptr, screen);
+        return;
+    }
+
     // ★ 让整块设置窗都能收鼠标：分层窗口的命中测试**只看 alpha**，
     //   而设置窗主体是纯透明的（buildFlatPanel 不铺底）——
     //   不抬 alpha，面板里点一下会直接穿透到背后的窗口
@@ -537,7 +564,14 @@ void SettingsWindow::pushFrame() {
         BLENDFUNCTION bf = {AC_SRC_OVER, 0, 255, AC_SRC_ALPHA};
         // ★ 全局面板透明度：滑块 0-100 作用在这一帧的整体 alpha 上
         // ★ 不再按「面板透明度」缩放整帧 alpha：滑块现在只把**背景**加雾（见 glass.cpp buildFlatPanel），否则连文字/图标/边框一起变透明。
-        UpdateLayeredWindow(hwnd_, screen, &dst, &sz, mem, &src, 0, &bf, ULW_ALPHA);
+        const BOOL ulw = UpdateLayeredWindow(hwnd_, screen, &dst, &sz, mem, &src, 0, &bf, ULW_ALPHA);
+        // 只在提交异常时打一行（正常时别刷屏，之前每帧一行太吵）
+        if (!ulw) {
+            logf("settings: ULW 提交失败 frame=%dx%d glass=%dx%d shadow=%dx%d outer=%dx%d sz=%dx%d",
+                 frame_.width(), frame_.height(), glass_.width(), glass_.height(),
+                 shadow_.width(), shadow_.height(), outer_.width(), outer_.height(),
+                 sz.cx, sz.cy);
+        }
         SelectObject(mem, old);
         DeleteDC(mem);
         DeleteObject(bmp);
