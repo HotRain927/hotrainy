@@ -1887,6 +1887,13 @@ LRESULT SearchWindow::handle(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 buildGlass();
                 layoutEntry();
                 redraw();
+                // ★ 缩放结束 = 用户调完了大小，立刻落盘。
+                //   用户反馈："跟随资源管理器时调好的大小，重启后又变回去" ——
+                //   根因是持久化只在 WM_LBUTTONUP 里做，而系统缩放循环下
+                //   WM_LBUTTONUP 不一定送到（见 WM_LBUTTONUP 里那句写死的
+                //   wasResize = false）。WM_EXITSIZEMOVE 一定会来。
+                //   ⚠ 只存尺寸，**不存位置** —— 位置要继续跟随目标窗口。
+                persistSize();
             }
             return 0;
 
@@ -2035,7 +2042,8 @@ LRESULT SearchWindow::handle(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 ReleaseCapture();
                 return 0;
             }
-            bool wasResize = false;   // 缩放已交给系统，不再自己收尾
+            // 注：缩放不在这里收尾 —— 系统的 WS_THICKFRAME 循环下
+            //     WM_LBUTTONUP 不一定送到，缩放的落盘放在 WM_EXITSIZEMOVE。
             bool wasDrag = dragging_ && dragMoved_;
             bool was = resizing_ || dragging_;
             resizing_ = false;
@@ -2046,7 +2054,6 @@ LRESULT SearchWindow::handle(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 ReleaseCapture();
                 rebuildGlassOffscreen();
                 syncEntryColors();
-                if (wasResize) persistSize();
                 if (wasDrag) {
                     persistPos();
                     persistSize();
