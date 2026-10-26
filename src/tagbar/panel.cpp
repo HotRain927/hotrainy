@@ -219,7 +219,16 @@ void HoverPanel::rebuildBase() {
 
     // ★ 主体纯透明 + 细边框（边框与主体同一坐标系，四角都是圆角）
     const int op = cfg_ ? cfg_->panelOpacity : 0;
-    base_.buildFlatPanel(op, radius, dark_);
+    //
+    // ★ 壁纸模式：这个标签选过壁纸就画壁纸，否则还是纯色雾。
+    //   Surface::buildWallpaperPanel() 一直有实现，但当年把抓屏玻璃换成
+    //   纯色雾时漏了这条调用 —— 于是壁纸模式上传的图永远不会出现在面板上
+    //   （用户反馈：壁纸模式上传的壁纸没有在对应面板上面显示）。
+    //   wallKey_ 在 showForTab() 里按 useWallpaperFor(cfg, tabIndex) 算好。
+    if (cfg_ && cfg_->wallpaperMode && !wallKey_.empty())
+        base_.buildWallpaperPanel(wallKey_, dark_, radius);
+    else
+        base_.buildFlatPanel(op, radius, dark_);
 
     // ★ 不再 cutRoundCorners：那一刀是为"不透明底"准备的（把角上的底色切透明）。
     //   现在主体就是全透明，只有边框在画，而边框走的是 SDF 圆角描边 ——
