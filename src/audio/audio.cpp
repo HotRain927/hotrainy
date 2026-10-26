@@ -247,11 +247,13 @@ void drawFrame() {
         //   再沿 x 加一点色相漂移 —— 色调更丰富。
         const int kStrands = 14;
         const int kStep = 1;                    // 横向采样步长（1px -> 更顺）
+        // ★ 用户要求：越靠外面的线颜色越淡 —— 所以每层的 alpha 随 k（内->外）
+        //   **递减**（a0 是内圈、a1 是外圈），外圈同时再细一点。
         struct Pass { float w; uint32_t a0; uint32_t a1; };
         const Pass passes[3] = {
-            {4.5f, 0x0Eu, 0x1Cu},               // 外光晕（极淡，负责柔）
-            {2.2f, 0x30u, 0x52u},               // 内光晕
-            {1.0f, 0x66u, 0xC8u},               // 细芯（提亮 -> 清晰）
+            {5.0f, 0x1Au, 0x06u},               // 外光晕：内 0x1A -> 外 0x06（最淡）
+            {2.6f, 0x5Au, 0x1Cu},               // 内光晕：内 0x5A -> 外 0x1C
+            {1.2f, 0xE6u, 0x66u},               // 细芯：  内 0xE6 -> 外 0x66（最亮在内）
         };
         for (int pass = 0; pass < 3; ++pass) {
             for (int s = 0; s < kStrands; ++s) {

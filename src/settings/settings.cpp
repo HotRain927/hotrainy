@@ -1063,13 +1063,19 @@ void SettingsWindow::redraw() {
                            [this](int v) { setInt("audio_bar_h", v); }, 1, 4000, 50, false);
                });
                y2 = row(rx, y2, L"音频条色调", "audio_tone", [this](int x, int cy) {
+                   // ⚠ 选项值必须是**数字**：segmented 把 "key:value" 交给派发器，
+                   //   派发器按整数解析 value（hover_mode 用的就是 "1"/"0"）。
+                   //   这里原来写 "black"/"yellow" 会被解析成 0，于是点哪个都变黑。
+                   const int toneIdx = (cfg_->audioTone == "black")  ? 0
+                                     : (cfg_->audioTone == "white")  ? 1
+                                     : (cfg_->audioTone == "blue")   ? 2
+                                     : (cfg_->audioTone == "red")    ? 3 : 4;
                    segmented(x, cy,
-                             {{L"黑", "black"}, {L"白", "white"}, {L"蓝", "blue"},
-                              {L"红", "red"}, {L"黄", "yellow"}},
-                             cfg_->audioTone, "audio_tone",
+                             {{L"黑", "0"}, {L"白", "1"}, {L"蓝", "2"},
+                              {L"红", "3"}, {L"黄", "4"}},
+                             std::to_string(toneIdx), "audio_tone",
                              [this](const std::string& v) {
-                                 setInt("audio_tone", v == "black" ? 0 : v == "white" ? 1
-                                                   : v == "blue"  ? 2 : v == "red"   ? 3 : 4);
+                                 setInt("audio_tone", std::stoi(v));
                              });
                });
     y2 = row(rx, y2, L"开机自启动", "autostart", [this](int x, int cy) {
