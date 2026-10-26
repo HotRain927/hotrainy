@@ -85,7 +85,9 @@ if (-not $token) {
     exit 1
 }
 Ok "拿到 token（长度 $($token.Length)，内容不显示）"
-$headers = @{ Authorization = "Bearer $token"; Accept = "application/vnd.github+json"; "User-Agent" = "hotrainy-publish" }
+# ★ 认证头必须用 token：GitHub Desktop 给的是 OAuth/PAT，
+#   Bearer 是 GitHub App / installation token 的写法，会 401（这就是原来发布失败的原因）。
+$headers = @{ Authorization = "token $token"; Accept = "application/vnd.github+json"; "User-Agent" = "hotrainy-publish" }
 
 Step 2 "确认账号"
 $me = Invoke-RestMethod -Uri "https://api.github.com/user" -Headers $headers -Method Get
@@ -135,7 +137,10 @@ try {
 }
 
 Step 5 "创建 Release $Tag"
-$relBody = Get-Content $RelNotesFile -Raw -Encoding UTF8
+# ★ 必须转成裸字符串：Get-Content 的返回值被 PSObject 包着、带 PSPath/PSParentPath
+#   等 NoteProperty，ConvertTo-Json 会把它序列化成**对象**，
+#   GitHub 的 body 字段要求字符串 -> 400 Invalid request（就是发布失败的第二个原因）。
+$relBody = [string](Get-Content $RelNotesFile -Raw -Encoding UTF8)
 # 去掉文件开头的归档说明，从 "# 中文" 开始作为发布正文
 $idx = $relBody.IndexOf("# 中文")
 if ($idx -gt 0) { $relBody = $relBody.Substring($idx) }
