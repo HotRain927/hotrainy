@@ -1561,6 +1561,7 @@ void IslandWindow::redraw() {
     //   原来只抬了最外圈（ensureHitTestableEdges，为了四角能拖着改大小），
     //   现在整块内容都抬到 alpha=1（1/255，肉眼不可见），见 glass.h 的说明。
     // ★ 只做"提交"，不重画内容 —— 见 pushFrame() 的说明。
+    contentDirty_ = true;   // 内容刚重画过 -> 提交时要重建合成位图
     pushFrame();
     (void)th;
 }
@@ -1573,19 +1574,34 @@ void IslandWindow::redraw() {
 //   所以拖动分支只调这个（几毫秒），而不是 redraw()（要画 26 个图标 +
 //   文字 + 分类 + 格子，几十毫秒 —— 那就是用户感受到的"卡"）。
 void IslandWindow::pushFrame() {
-    RECT contentRc = {0, 0, w_, h_};
-    frame_.ensureHitTestableArea(contentRc, px(14),
-                                 hitTestAlphaFor(cfg_ ? cfg_->panelOpacity : 100));
-
-    // ★ 内容 + 外阴影合成到"带留白"的画布，再整幅提交。
-    //   落点要向左上各让出留白（dst = 内容位置 - 留白），
-    //   所以鼠标坐标要减掉同样的留白（见 contentPt）。
-    const int s = shadowInset();
-    outer_ = shadow_;
-    outer_.blendOver(frame_, s, s);
-
     HDC screen = GetDC(nullptr);
-    HBITMAP bmp = outer_.createPremultipliedBitmap(screen);
+    if (!screen) return;
+
+    // ★ 内容没变（纯移动）就**复用上次合成的位图**：位置只体现在
+    //   UpdateLayeredWindow 的落点里，像素一个都没变。
+    //   这样拖动每帧只剩一次 UpdateLayeredWindow。
+    if (contentDirty_ || !cachedBmp_) {
+        RECT contentRc = {0, 0, w_, h_};
+        frame_.ensureHitTestableArea(contentRc, px(14),
+                                     hitTestAlphaFor(cfg_ ? cfg_->panelOpacity : 100));
+
+        // ★ 内容 + 外阴影合成到"带留白"的画布，再整幅提交。
+        //   落点要向左上各让出留白（dst = 内容位置 - 留白），
+        //   所以鼠标坐标要减掉同样的留白（见 contentPt）。
+        const int s0 = shadowInset();
+        outer_ = shadow_;
+        outer_.blendOver(frame_, s0, s0);
+
+        if (cachedBmp_) {
+            ::DeleteObject(cachedBmp_);
+            cachedBmp_ = nullptr;
+        }
+        cachedBmp_ = outer_.createPremultipliedBitmap(screen);
+        contentDirty_ = false;
+    }
+
+    const int s = shadowInset();
+    HBITMAP bmp = cachedBmp_;   // ← 复用缓存（不再每帧新建）
     if (bmp) {
         HDC mem = CreateCompatibleDC(screen);
         HGDIOBJ old = SelectObject(mem, bmp);
@@ -1620,7 +1636,8 @@ void IslandWindow::pushFrame() {
         UpdateLayeredWindow(hwnd_, screen, &dst, &size, mem, &src, 0, &blend, ULW_ALPHA);
         SelectObject(mem, old);
         DeleteDC(mem);
-        DeleteObject(bmp);
+        // ⚠ 不删 bmp：它是 cachedBmp_，要留给下一帧复用
+        //   （尺寸变化时在 pushFrame 开头统一 DeleteObject 后重建）。
     }
     ReleaseDC(nullptr, screen);
 }

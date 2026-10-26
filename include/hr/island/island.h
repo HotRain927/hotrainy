@@ -206,6 +206,10 @@ private:
     Surface frame_;     // 本帧：底 + 内容（内容大小）
     Surface shadow_;    // 画布大小：只含外圈影子
     Surface outer_;     // 画布大小：shadow_ + frame_ → 提交给窗口
+    // ★ 提交缓存：内容没变（纯移动）时复用上次合成的位图，
+    //   拖动每帧就只剩一次 UpdateLayeredWindow。
+    HBITMAP cachedBmp_ = nullptr;
+    bool contentDirty_ = true;
     Backdrop backdrop_;
     bool baseValid_ = false;
     // 上次重抓背景时的前台窗口 —— 用来判断"背景要不要重抓"（透明实时更新）。
