@@ -119,11 +119,12 @@ void captureLoop() {
             // ★ 沿线起伏：四组行波叠加（频率依次升高）—— 沿 x 出 3~5 个明显
             //   的峰谷，而且整体缓慢流动。这里**不再**乘拱形，否则拱会盖掉起伏。
             // ★ 幅度更明显（用户要求）
+            // ★ 频率提高（用户："让波动的频率更明显、更波动不齐"）
             double f = 0.46
-                     + 0.34 * std::sin(u * 9.0 - nowS * 1.10)
-                     + 0.26 * std::sin(u * 17.0 + nowS * 0.75 + 1.3)
-                     + 0.16 * std::sin(u * 33.0 - nowS * 1.90 + 2.6)
-                     + 0.10 * std::sin(u * 61.0 + nowS * 2.70 + 0.7);
+                     + 0.34 * std::sin(u * 16.0 - nowS * 1.10)
+                     + 0.26 * std::sin(u * 29.0 + nowS * 0.75 + 1.3)
+                     + 0.16 * std::sin(u * 53.0 - nowS * 1.90 + 2.6)
+                     + 0.10 * std::sin(u * 91.0 + nowS * 2.70 + 0.7);
             f = std::max(0.0, std::min(1.0, f));
             // ★ 中间更高、两端更低（圆顶更陡：两端 0.28、中间 1.0）
             const double dome = 0.28 + 0.72 * std::sin(kPi * u);
@@ -237,7 +238,12 @@ void drawFrame() {
         // ★ 只把最两端收成细线：原来是 sin^2（等于又叠了一层拱，把沿线起伏
         //   一起压平了），改成 sqrt(sin) —— 中间绝大部分宽度不被压。
         const double taper = std::pow(std::max(0.0, std::sin(3.14159265358979 * u)), 0.85);   // 边缘更细
-        return std::max(0.0, v) * taper;
+        // ★ 包络层再加一道**逐像素**细密波纹（用户："更加波动不齐"）：
+        //   频段插值本身很顺，只有靠它才能出参差不齐的细节。乘性叠加，
+        //   响的地方波纹大、静的地方自动收敛。
+        const double ripple = 1.0 + 0.18 * std::sin(u * 118.0 + t * 1.7)
+                                  + 0.10 * std::sin(u * 227.0 - t * 2.3 + 0.9);
+        return std::max(0.0, v) * taper * ripple;
     };
 
     {
@@ -266,13 +272,13 @@ void drawFrame() {
         //   宽而**几乎不可见** —— 6px 只有 alpha 0x04(1.6%)、2.4px 只有 0x0A(4%)。
         //   宽 + 极低 alpha 观感上是一层光而不是一条粗线，
         //   所以既保留了一点柔光，又不会显得粗。
+        // ★ 完全不要光晕（用户："完全不要光晕吧还是"）：只有一根细亮芯。
+        //   "越向外越淡"靠 alpha 与颜色（饱和度/亮度）的线性梯度实现。
         struct Pass { float w; uint32_t a0; uint32_t a1; };
-        const Pass passes[3] = {
-            {6.0f, 0x04u, 0x00u},               // 极限微光（极宽极淡）
-            {2.4f, 0x0Au, 0x00u},               // 极限微光
-            {0.7f, 0xF0u, 0x08u},               // 亮芯：内 0xF0 -> 外 0x08
+        const Pass passes[1] = {
+            {0.7f, 0xF0u, 0x08u},               // 仅亮芯：内 0xF0 -> 外 0x08
         };
-        for (int pass = 0; pass < 3; ++pass) {
+        for (int pass = 0; pass < 1; ++pass) {
             for (int s = 0; s < kStrands; ++s) {
                 const double k = (s + 1) / (double)kStrands;   // 由内到外
                 const double ph = t * (0.7 + 0.5 * k) + s * 2.3;
