@@ -351,13 +351,18 @@ LRESULT SettingsWindow::handle(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 if (abs(nx - x_) + abs(ny - y_) > px(2)) dragged_ = true;
                 x_ = nx;
                 y_ = ny;
-                // ★ 照抄搜索框的拖动方式（它是三个面板里唯一丝滑的）：
-                //   客户区坐标交给 ULW 的 pptDst 去落位，这里只更新内容原点，
-                //   然后**每次都要重新提交一帧**（redraw -> pushFrame），
-                //   分层表面才会立刻跟着走。
-                SetWindowPos(hwnd_, nullptr, x_, y_, 0, 0,
+                // ★ 纯移动：**内容像素一个都没变**（位置由 ULW 的落点决定，
+                //   不在像素里），所以不需要重画整页控件 —— 只把上一帧原样
+                //   重新提交一次即可。redraw() 每帧要画上百个控件（几十毫秒，
+                //   用户感受到的卡就是它）；pushFrame() 只做位图 + 提交。
+                // ⚠ SetWindowPos 的落点必须与 pushFrame() 里 ULW 的 dst 一致
+                //   （都是 x_-留白）。写成内容坐标 x_ 的话，一帧内窗口先被摆到
+                //   偏 21 像素的位置、再被 ULW 拉回来 —— 就是用户看到的
+                //   "长按抖动频闪"。
+                const int shd = shadowInset();
+                SetWindowPos(hwnd_, nullptr, x_ - shd, y_ - shd, 0, 0,
                              SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
-                redraw();
+                pushFrame();
                 return 0;
             }
             const Hit* h = hitAt(mx, my);

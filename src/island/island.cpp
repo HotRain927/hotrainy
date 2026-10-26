@@ -1560,6 +1560,19 @@ void IslandWindow::redraw() {
     //   不抬 alpha，格子空白处的点击/拖动会直接穿透到背后的窗口。
     //   原来只抬了最外圈（ensureHitTestableEdges，为了四角能拖着改大小），
     //   现在整块内容都抬到 alpha=1（1/255，肉眼不可见），见 glass.h 的说明。
+    // ★ 只做"提交"，不重画内容 —— 见 pushFrame() 的说明。
+    pushFrame();
+    (void)th;
+}
+
+
+// ★ 提交当前 frame_（内容 + 外阴影 + 落点）。
+//
+//   从 redraw() 尾部抽出来，是为了让**纯移动**不必重画内容：
+//   移动时位置只体现在 UpdateLayeredWindow 的落点里，像素一个都没变，
+//   所以拖动分支只调这个（几毫秒），而不是 redraw()（要画 26 个图标 +
+//   文字 + 分类 + 格子，几十毫秒 —— 那就是用户感受到的"卡"）。
+void IslandWindow::pushFrame() {
     RECT contentRc = {0, 0, w_, h_};
     frame_.ensureHitTestableArea(contentRc, px(14),
                                  hitTestAlphaFor(cfg_ ? cfg_->panelOpacity : 100));
@@ -1610,7 +1623,6 @@ void IslandWindow::redraw() {
         DeleteObject(bmp);
     }
     ReleaseDC(nullptr, screen);
-    (void)th;
 }
 
 // ── 搜索 ────────────────────────────────────────────────────────────
@@ -2283,7 +2295,7 @@ layoutSearchEdit();     // 搜索框位置跟上就行
                 y_ = cur.y - winDragOffset_.y;
                 ::SetWindowPos(h, nullptr, x_, y_, 0, 0,
                                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
-                redraw();
+                pushFrame();   // 纯移动：只提交，不重画（见 pushFrame 说明）
                 return 0;
             }
 

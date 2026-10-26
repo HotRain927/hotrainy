@@ -123,6 +123,7 @@ private:
     //   只有"跟系统打交道"的地方要减掉它（提交、鼠标坐标、窗口矩形、输入框摆放）。
     int shadowInset() const;
     void redraw();
+    void pushFrame();     // 只提交当前帧（纯移动时用，比重画便宜得多）
     void refreshBackdrop();
 
     // ── 分类 ──
