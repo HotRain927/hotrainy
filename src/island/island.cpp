@@ -1016,10 +1016,22 @@ void IslandWindow::searchBoxRect(int& x, int& y, int& w, int& h) const {
 void IslandWindow::layoutSearchEdit() {
     if (!searchEdit_) return;
 
-    // ⚠ 基准用**实际窗口矩形**，不用成员 x_/y_（记忆位置在窗口被系统
-    //   挪动/缩放后会短暂不一致，输入框就会错位）。
+    // 基准：**实际窗口矩形**优先（窗口被系统挪动/缩放后成员可能短暂不一致），
+    // 但只在"窗口真的可见、且不在展开动画中"时才信它。
+    //
+    // ⚠ 为什么必须加这个条件：展开动画为了让画面缩放，本来就要改窗口矩形；
+    //   隐藏/收纳时窗口也可能停在别处。这两种过渡态下 GetWindowRect() 拿到的是
+    //   "过渡矩形"，据此算出的输入框位置是错的 —— 实测同一块面板、同尺寸、
+    //   只因为调用时机不同，输入框自己低了 17 像素（用户反复看到的"又不居中"）。
+    //   过渡态改用成员 x_/y_（内容原点，一直由我们自己维护）换算窗口矩形。
     RECT wr{};
-    if (!::GetWindowRect(hwnd_, &wr)) return;
+    if (!::GetWindowRect(hwnd_, &wr) || growActive_ || !::IsWindowVisible(hwnd_)) {
+        const int shd0 = islandShadowPx();
+        wr.left = x_ - shd0;
+        wr.top = y_ - shd0;
+        wr.right = wr.left + w_ + shd0 * 2;
+        wr.bottom = wr.top + h_ + shd0 * 2;
+    }
 
     // 输入框与提亮条共用同一个矩形来源（searchBoxRect），水平方向对齐；
     // 竖直方向按"一行文字高度、对称压在提亮条中心"来摆（见下面 lineH 那一段）。
