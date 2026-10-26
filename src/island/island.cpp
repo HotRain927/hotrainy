@@ -965,8 +965,12 @@ void IslandWindow::createSearchEdit(HINSTANCE hInst) {
     }
     // 子类过程要靠 GWLP_USERDATA 找到 this —— 必须在挂钩之前设好
     ::SetWindowLongPtrW(searchEdit_, GWLP_USERDATA, (LONG_PTR)this);
-    // 分层只是为了让抓屏能排除它，alpha 必须给满 —— 否则搜索框就变半透明了
-    ::SetLayeredWindowAttributes(searchEdit_, 0, 255, LWA_ALPHA);
+    // ★ 用**颜色键**而不是 alpha：EDIT 自己会刷一块不透明底色（见 WM_CTLCOLOREDIT），
+    //   把它刷的那块颜色键成透明，就得到"背景全透、只留文字" ——
+    //   否则框内永远是一块死色，我们渲染层画什么都白搭（被它盖住）。
+    //   底色取自 updateSearchBgColor 对已画好那一帧的取样，实际颜色每帧同步。
+    ::SetLayeredWindowAttributes(searchEdit_, RGB(rOf(searchBgCol_), gOf(searchBgCol_),
+                                                  bOf(searchBgCol_)), 0, LWA_COLORKEY);
 
     searchFont_ = ::CreateFontW(-pt(12), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
                                 DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
@@ -1001,7 +1005,13 @@ void IslandWindow::updateSearchBgColor(int x, int y) {
         ::DeleteObject(searchBgBrush_);
         searchBgBrush_ = nullptr;
     }
-    if (searchEdit_) ::InvalidateRect(searchEdit_, nullptr, TRUE);
+    if (searchEdit_) {
+        // ★ 底色变了，颜色键必须跟着变 —— 否则会留下一圈旧色的边。
+        //   这一句就是"框内透明"的全部机关：EDIT 刷什么颜色，什么颜色就变透明。
+        ::SetLayeredWindowAttributes(searchEdit_,
+                                     RGB(rOf(col), gOf(col), bOf(col)), 0, LWA_COLORKEY);
+        ::InvalidateRect(searchEdit_, nullptr, TRUE);
+    }
 }
 
 // 顶部搜索框（提亮条）矩形 —— 绘制与内嵌 EDIT 的唯一来源，坐标系是**内容坐标**
