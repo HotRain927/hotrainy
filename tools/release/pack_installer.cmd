@@ -10,7 +10,7 @@ rem  Output: hotrainy_<ver>_installer.exe  +  hotrainy_<ver>_setup.zip
 rem  Just double-click this file after changing the program.
 rem ============================================================
 setlocal
-set "ROOT=%~dp0"
+set "ROOT=C:\hot_rain\"
 if "%ROOT:~-1%"=="\" set "ROOT=%ROOT:~0,-1%"
 set "BT=C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools"
 set "SRC=%ROOT%\cpp\hotrainy\tools\installer\hr_installer.cpp"
