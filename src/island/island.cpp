@@ -349,6 +349,14 @@ void IslandWindow::hide() {
     //
     //   visible_ 只在 show() 到 hide() 之间为真，用它当门槛正好。
     if (visible_) {
+        // ★ 展开动画进行中时，窗口矩形是**插值**出来的（为了让画面缩放），
+        //   不能拿它当真实几何存盘 —— 否则会把"动画中途的尺寸/位置"写进配置。
+        //   做法：先把动画收尾（按最终几何出一帧），窗口矩形就恢复成真实值了。
+        if (growActive_) {
+            growActive_ = false;
+            ::KillTimer(hwnd_, kGrowTimerId);
+            redraw();
+        }
         RECT wr{};
         if (::GetWindowRect(hwnd_, &wr)) {
             // ★ 窗口矩形 = 内容 + 四周外阴影留白 → 存进配置的必须是**内容**几何，
@@ -1300,13 +1308,22 @@ void IslandWindow::redraw() {
     int sx = 0, sy = 0, sw = 0, sh = 0;
     searchBoxRect(sx, sy, sw, sh);
     if (sw > px(80) && sh > px(16)) {
-        // ★ 输入框的底必须**不透明**：它是那个真 EDIT 窗口自己刷底色的，
-        //   而 EDIT 只能填一个实色 —— 两边同色才零色差（下面 updateSearchBgColor 的用意）。
+        // ★ 框内 = **比面板雾更浓一档的雾**，不是不透明纯色。
         //
-        //   ⚠ 原来画的是半透明白 0x28FFFFFF，而 updateSearchBgColor() 从这一帧取像素时
-        //     只取 RGB、把 alpha 强写成 255 → EDIT 拿到的是**纯白实色**画刷，
-        //     用户看到的就是搜索框那条"非常亮的白底"。改成不透明深色后才真正一致。
-        const uint32_t boxCol = 0xFF1B1D22u;   // 不透明深色：白字黑边压在上面读得清
+        //   真 EDIT 本来就是透明的（WM_CTLCOLOREDIT 返回 NULL_BRUSH，只有输入法
+        //   组合时才临时给一块实色底，见 islandSearchEditProc），所以框内看到的那块
+        //   颜色完全由这里决定。
+        //
+        //   面板雾的 alpha = panelOpacity% x maxA(200)；这里取"面板雾 + 34"，
+        //   钳在 180..240 —— 于是框内是"同一层玻璃、更浓一点"，
+        //   壁纸的明暗依然能透进来（用户要的就是这个观感）。
+        const int panelPct = cfg_ ? cfg_->panelOpacity : 90;
+        int boxA = panelPct * 200 / 100 + 34;
+        if (boxA > 240) boxA = 240;
+        if (boxA < 180) boxA = 180;
+        // 颜色取雾本身的中性色（与 Surface::fillFog 同一套），只是 alpha 更高。
+        const uint32_t fogRgb = dark_ ? 0x00101216u : 0x00F1F3F7u;
+        const uint32_t boxCol = ((uint32_t)boxA << 24) | fogRgb;
         frame_.fillRoundRect(sx, sy, sw, sh, sh / 2, boxCol);
         // 一圈细玻璃边，让它看起来是个输入框而不是一块黑板
         frame_.strokeGlassEdge(sx, sy, sw, sh, sh / 2, dark_, 1.0);
@@ -1317,7 +1334,7 @@ void IslandWindow::redraw() {
         RECT ir = {ix, iy - px(10), ix + px(20), iy + px(10)};
         frame_.drawText(L"\uE721", ir, (float)pt(11), textDim_, 0, false, L"Segoe MDL2 Assets");
 
-        // ★ 从**画好的这一帧**里取一个像素当输入框底色。
+        // ★ 从**画好的这一帧**里取一个像素，作为"输入法组合串"那层临时实色底。
         //
         //   为什么不用估算（玻璃均值 + 叠加）：那样总有几级色差，
         //   在胶囊里就会显出一块矩形（用户之前就为这个发过火）。
@@ -2002,7 +2019,12 @@ layoutSearchEdit();     // 搜索框位置跟上就行
             //   不处理这个消息的话，表现就是
             //   "能拖动改大小，但松手后又被画回原尺寸，配置也不保存"。
             auto wp = reinterpret_cast<WINDOWPOS*>(l);
-            if (wp && !(wp->flags & SWP_NOSIZE)) {
+            // ★ 展开动画进行中：窗口矩形是插值出来的，**绝不能**把它同步成 w_/h_/x_/y_，
+            //   也不能在这个基础上重摆输入框（否则动画中途会被当成真实几何，
+            //   还会被 hide() 落盘 —— 用户"搜索框又不居中了"的根因就在这）。
+            //   动画最后一帧会把 growActive_ 清掉，那时这一句会按最终几何正常跑一次。
+            const bool animating = growActive_;
+            if (!animating && wp && !(wp->flags & SWP_NOSIZE)) {
                 const int nw = wp->cx;
                 const int nh = wp->cy;
                 if (nw > 0 && nh > 0 && (nw != w_ || nh != h_)) {
@@ -2010,13 +2032,15 @@ layoutSearchEdit();     // 搜索框位置跟上就行
                     h_ = nh;
                 }
             }
-            if (wp && !(wp->flags & SWP_NOMOVE)) {
+            if (!animating && wp && !(wp->flags & SWP_NOMOVE)) {
                 x_ = wp->x;
                 y_ = wp->y;
             }
 
-            layout();
-            layoutSearchEdit();     // 面板动了，搜索框要跟着
+            if (!animating) {
+                layout();
+                layoutSearchEdit();     // 面板动了，搜索框要跟着
+            }
             baseValid_ = false;
             // ★ 拖动中**不重绘面板**。
                 //
@@ -2216,6 +2240,11 @@ layoutSearchEdit();     // 搜索框位置跟上就行
                 layout();
                 baseValid_ = false;
                 redraw();
+                // ★ 必须显式重摆内嵌输入框：它是**独立顶层窗口**（分层窗口渲染不了子控件），
+                //   不跟着父窗口走。漏掉这一句的后果 —— 拖大/拖小面板之后，
+                //   输入框还停在旧几何上：文字看着不居中、底色还会多出一截越出边框
+                //   （用户两次反馈的现象，根因都是这一句）。
+                layoutSearchEdit();
             }
             return TRUE;
         }
