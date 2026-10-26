@@ -554,7 +554,7 @@ void Surface::fillFog(int opacityPercent, int radius, bool dark) {
     if (p > 100) p = 100;
     if (p <= 0) return;
     const uint32_t fogRgb = dark ? 0x00101216u : 0x00F1F3F7u;   // 只取 RGB
-    const int maxA = dark ? 0xC8u : 0xA6u;                       // 100% 时的雾浓度
+    const int maxA = dark ? 0xDCu : 0xBEu;                       // 100% 时的雾浓度（深 220 / 浅 190，用户要求再浓一点）
     const uint32_t col = ((uint32_t)(maxA * p / 100) << 24) | fogRgb;
     fillRoundRect(0, 0, w_, h_, radius, col);
 }

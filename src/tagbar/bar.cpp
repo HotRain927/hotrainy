@@ -676,7 +676,7 @@ void BarWindow::syncHoverFromCursor() {
     }
     if (idx >= 0) {
         // 和 WM_MOUSEMOVE 那条路一样：35ms 停留阈值
-        hoverTimer_ = SetTimer(hwnd_, kHoverTimerId, 35, nullptr);
+        hoverTimer_ = SetTimer(hwnd_, kHoverTimerId, 12, nullptr);
     } else if (hover_ >= 0) {
         hover_ = -1;
         redraw();
@@ -716,7 +716,7 @@ LRESULT BarWindow::handle(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 }
                 if (idx >= 0) {
                     // 35ms 停留阈值：扫过去不弹，停下才弹
-                    hoverTimer_ = SetTimer(hwnd, kHoverTimerId, 35, nullptr);
+                    hoverTimer_ = SetTimer(hwnd, kHoverTimerId, 12, nullptr);
                 } else if (hover_ >= 0) {
                     hover_ = -1;
                     redraw();
