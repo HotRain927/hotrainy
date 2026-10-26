@@ -354,12 +354,6 @@ LRESULT SettingsWindow::handle(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 const int shd = shadowInset();
                 SetWindowPos(hwnd_, nullptr, x_ - shd, y_ - shd, 0, 0,
                              SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
-                // ★ 每一帧都要重新提交（redraw -> pushFrame -> UpdateLayeredWindow）
-                //   把新落点写进去，分层表面才会立刻跟着窗口走。
-                //   只 SetWindowPos 不提交的话，窗口在动、画面要等系统重新合成
-                //   旧表面 —— 拖起来就是一卡一卡（用户对比搜索面板得出的结论，
-                //   而搜索面板正是每帧 SetWindowPos + redraw）。
-                redraw();
                 return 0;
             }
             const Hit* h = hitAt(mx, my);
