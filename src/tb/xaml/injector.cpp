@@ -34,6 +34,7 @@
 // ═══════════════════════════════════════════════════════════════════════
 #include "hr/tb/xaml/injector.h"
 #include "hr/shared/winver.h"   // ★ 版本层闸门（安全模式 / Win10 判定）
+#include "hr/tb/accent/taskbar_accent.h"   // ★ Win10：accents 亚克力
 
 #include "hr/shared/common.h"
 #include "hr/tb/xaml/interfaces.h"
@@ -356,6 +357,13 @@ bool forEachTaskbar(Fn&& fn) {
 }  // namespace
 
 bool applyTransparent() {
+    // ★ Win10（build < 22621 且非安全模式）：没有 XAML 任务栏，改走 accents 亚克力
+    //   —— 按实测矩阵这是 Win10 最稳的一条路，而且完全不需要注入 explorer。
+    //   失败时返回 false，调用方照原样处理即可。
+    if (hr::winVersion().isWin10()) {
+        logf("xaml: 检测到 Win10，改用 accents 亚克力方案（不注入）");
+        return hr::tb::accent::apply(100);
+    }
     if (!injectionAllowed("应用任务栏透明")) return false;
     if (!injectIntoExplorer()) {
         logf("xaml: 注入失败，无法应用透明");
@@ -378,6 +386,8 @@ bool applyTransparent() {
 }
 
 bool restoreDefault() {
+    // ★ Win10：同样只需关掉 accent
+    if (hr::winVersion().isWin10()) hr::tb::accent::restore();
     // 通过共享内存通道把「还原」指令送给 explorer 里的 DLL。
     //
     // 不走 COM：自定义接口跨进程需要代理桩，代价远大于收益。
@@ -406,6 +416,8 @@ bool restoreDefault() {
 }
 
 bool restoreTransparencyOnly() {
+    // ★ Win10：把 accent 关掉即可（没有注入可清）
+    if (hr::winVersion().isWin10()) return hr::tb::accent::restore();
     // ⚠ 没注入就直接返回 —— 没有 DLL 就没有任何残留状态要还原。
     //
     //   踩过的坑：冷启动时这里会在注入**之前**发指令，

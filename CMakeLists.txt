@@ -168,7 +168,9 @@ foreach(mod app tagbar island settings search text audio glass shared)
 endforeach()
 file(GLOB HR_TB_SOURCES "${CMAKE_SOURCE_DIR}/src/tb/*.cpp")
 file(GLOB HR_XAML_SOURCES "${CMAKE_SOURCE_DIR}/src/tb/xaml/*.cpp")
-list(APPEND HR_SOURCES ${HR_TB_SOURCES} ${HR_XAML_SOURCES})
+# ★ Win10 适配：accents 亚克力任务栏（阶段 2），单独一个子目录
+file(GLOB HR_ACCENT_SOURCES "${CMAKE_SOURCE_DIR}/src/tb/accent/*.cpp")
+list(APPEND HR_SOURCES ${HR_TB_SOURCES} ${HR_XAML_SOURCES} ${HR_ACCENT_SOURCES})
 # json.cpp 来自 tbg 子工程
 list(APPEND HR_SOURCES "${CMAKE_SOURCE_DIR}/third_party/tbg/src/json.cpp")
 
