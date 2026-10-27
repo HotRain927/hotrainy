@@ -33,6 +33,7 @@
 //   所以钩子的生命周期 = 透明效果的生命周期。
 // ═══════════════════════════════════════════════════════════════════════
 #include "hr/tb/xaml/injector.h"
+#include "hr/shared/winver.h"   // ★ 版本层闸门（安全模式 / Win10 判定）
 
 #include "hr/shared/common.h"
 #include "hr/tb/xaml/interfaces.h"
@@ -173,7 +174,35 @@ bool channelHasListener() {
 
 // ── 注入 ─────────────────────────────────────────────────────────────
 
+// ── 版本层闸门 ─────────────────────────────────────────────
+// 返回 false 表示"本次不允许做系统级注入"。每个入口函数开头调一次即可。
+// 只在**状态变化**时打日志，避免每次调用都刷屏。
+static bool injectionAllowed(const char* what) {
+    static bool loggedSafe = false;
+    static bool loggedNotWin11 = false;
+
+    if (hr::safeMode()) {
+        if (!loggedSafe) {
+            loggedSafe = true;
+            logf("xaml: 【安全模式】跳过 %s —— 本次不做任何注入（用户用 --safe 自救）",
+                 what);
+        }
+        return false;
+    }
+    if (!hr::winVersion().isWin11()) {
+        if (!loggedNotWin11) {
+            loggedNotWin11 = true;
+            logf("xaml: 本机是 %s，**没有 XAML 任务栏**，"
+                 "注入通道不适用 -> 跳过 %s（Win10 请走 Accent 亚克力方案）",
+                 hr::winVersion().friendly().c_str(), what);
+        }
+        return false;
+    }
+    return true;
+}
+
 bool injectIntoExplorer() {
+    if (!injectionAllowed("注入 explorer")) return false;
     std::lock_guard<std::mutex> lk(g_mu);
     if (g_injected && g_hook) return true;
 
@@ -327,6 +356,7 @@ bool forEachTaskbar(Fn&& fn) {
 }  // namespace
 
 bool applyTransparent() {
+    if (!injectionAllowed("应用任务栏透明")) return false;
     if (!injectIntoExplorer()) {
         logf("xaml: 注入失败，无法应用透明");
         return false;
@@ -419,6 +449,7 @@ bool hasListener() {
 }
 
 bool setIslandTakeover(bool on) {
+    if (!injectionAllowed("岛台按钮接管")) return false;
     // 前置条件：DLL 必须在 explorer 里才谈得上改任务栏元素。
     //
     // 与 restoreDefault 不同，这里**不**尝试对"残留 DLL"发指令 ——

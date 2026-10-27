@@ -28,6 +28,7 @@
 #include "hr/settings/settings.h"
 #include "hr/island/taskbar.h"
 #include "hr/tb/xaml/injector.h"
+#include "hr/shared/winver.h"   // ★ 版本层：系统版本 + 任务栏透明能力表 + --safe
 #include "hr/text/theme.h"
 #include "hr/app/app_context.h"
 #include "hr/app/version.h"
@@ -987,6 +988,11 @@ LRESULT CALLBACK msgProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 int main() {
     logInit();
     logf("===== hotrainy(C++) 启动 =====");
+
+    // ★ 版本层（Win10 适配阶段 1）：探测真实系统版本（RtlGetVersion，
+    //   绝不用 GetVersionEx）、打印任务栏透明候选方案、解析 --safe 安全模式。
+    //   放在这里是为了让版本信息出现在日志最前面，且早于任何窗口创建。
+    hr::initVersionLayer();
 
     // ⚠ 单实例保护 —— 必须放在最前面，早于任何窗口创建。
     //
